@@ -542,7 +542,10 @@ window.__ModuleLoader__.load({
                   `内存 ${gib(mem.used)} / ${gib(mem.total)} GB`,
                   mem.source === 'vm_stat' ? '口径：vm_stat（与活动监视器一致：匿名 − 可清除 + 联动 + 压缩）' : null,
                   mem.swapTotal != null
-                    ? `交换空间 ${gib(mem.swapUsed ?? 0)} / ${gib(mem.swapTotal)} GB`
+                    ? // macOS grows the swap files while the page count is
+                      // already rising, so a reading can briefly report more
+                      // used than total; never print an impossible fraction.
+                      `交换空间 ${gib(mem.swapUsed ?? 0)} / ${gib(Math.max(mem.swapTotal, mem.swapUsed ?? 0))} GB`
                     : null,
                 ]
                   .filter(Boolean)
