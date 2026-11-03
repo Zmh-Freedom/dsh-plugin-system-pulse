@@ -2,35 +2,47 @@
  * Host half of the system-pulse HUD.
  *
  * Sampled on demand: every GET /api/system-pulse/snapshot takes one reading.
- * Nothing runs while nobody looks — the GPU and network probes are long-lived
- * child processes that start with the first request and are killed after
- * `idleStopMs` of silence.
+ * Nothing runs while nobody looks — the long-lived probes are started by the
+ * first request and are stopped after `idleStopMs` of silence.
  *
  *   GET /api/system-pulse/snapshot?window=60   one JSON snapshot + history
  *   GET /api/system-pulse/health               probe states, for debugging
  *
- * Cheap values come from node:os. The expensive ones come from two helpers,
- * because spawning a shell per sample costs far more than the data is worth:
+ * CPU and memory come from node:os. The platform-specific probes are:
  *
- *   nvidia-smi ... -l N                      one CSV line per N seconds
- *   powershell Get-Counter -Continuous       one JSON line per N seconds
+ *   Windows  nvidia-smi -l N                 one CSV line per N seconds
+ *            powershell Get-Counter          one JSON line per N seconds
+ *            LibreHardwareMonitor web server temperatures, fan, package power
+ *   macOS    ioreg -c IOAccelerator          GPU utilisation + unified memory
+ *            netstat -ibn                    cumulative per-interface counters
+ *            vm_stat / sysctl                Activity-Monitor style memory + swap
+ *   Linux    /proc/net/dev                  cumulative per-interface counters
  *
- * typeperf was the obvious choice for PDH counters, but its stdout is fully
- * buffered when piped, so it delivers nothing until it exits. A PowerShell
- * loop with -Continuous pays the PDH setup once and then formats each sample
- * in single-digit milliseconds.
+ * Temperatures, fan speed and package power need a privileged sensor source on
+ * macOS (powermetrics or the SMC), so those fields stay null there and `health`
+ * says why. GPU temperature, clock and power are likewise unavailable; the HUD
+ * shows utilisation and unified-memory usage instead.
  *
- * Temperatures, fan and CPU package power need LibreHardwareMonitor's web
- * server. When it is absent those fields stay null and `health` says why; the
- * same poll also supplies GPU load on machines without nvidia-smi.
+ * Windows detail: typeperf was the obvious choice for PDH counters, but its
+ * stdout is fully buffered when piped, so it delivers nothing until it exits.
+ * A PowerShell loop with -Continuous pays the PDH setup once and then formats
+ * each sample in single-digit milliseconds. Temperatures need
+ * LibreHardwareMonitor's web server; without it those fields stay null and
+ * `health` says why, while the same poll also supplies GPU load on machines
+ * without nvidia-smi.
  */
 
 import os from 'node:os'
+import { execFileSync, spawn } from 'node:child_process'
 import { readFileSync } from 'node:fs'
-import { spawn } from 'node:child_process'
 
 const BASE = '/api/system-pulse'
 const MIB = 1024 * 1024
+
+const PLATFORM = process.platform
+const IS_WIN32 = PLATFORM === 'win32'
+const IS_DARWIN = PLATFORM === 'darwin'
+const IS_LINUX = PLATFORM === 'linux'
 
 const DEFAULTS = {
   intervalMs: 1000,
@@ -61,6 +73,22 @@ const NVIDIA_QUERY = [
 const ADAPTER_SKIP =
   'isatap|loopback|teredo|pseudo|vethernet|wan miniport|bluetooth|tap|tailscale|zerotier|hyper-v|virtualbox|vmware|wireguard|openvpn'
 
+/**
+ * macOS system tools, called by absolute path: a GUI-launched app gets the
+ * launchd PATH, which may not include /usr/sbin when DSH was started from a
+ * shell with a trimmed environment.
+ */
+const DARWIN_TOOLS = {
+  ioreg: '/usr/sbin/ioreg',
+  netstat: '/usr/sbin/netstat',
+  sysctl: '/usr/sbin/sysctl',
+  vmStat: '/usr/bin/vm_stat',
+}
+
+/** Same idea for the BSD interface names netstat reports on macOS. */
+const DARWIN_IFACE_SKIP =
+  /^(lo\d*|gif\d*|stf\d*|anpi\d*|awdl\d*|llw\d*|ap\d*|bridge\d*|utun\d*|ipsec\d*|ppp\d*|nan\d*|vmenet\d*|vmnet\d*|tap\d*|tun\d*)$/
+
 function json(res, status, value) {
   const body = JSON.stringify(value)
   res.writeHead(status, {
@@ -83,6 +111,16 @@ function num(value) {
   return Number.isFinite(n) ? n : null
 }
 
+function clamp01(value) {
+  if (!Number.isFinite(value)) return 0
+  return Math.min(1, Math.max(0, value))
+}
+
+/** One-shot helper for the cheap macOS system tools (a few milliseconds each). */
+function execText(file, args, timeout = 3000) {
+  return execFileSync(file, args, { encoding: 'utf8', timeout, maxBuffer: 8 * MIB })
+}
+
 function readCpuTimes() {
   const cpus = os.cpus()
   return {
@@ -94,11 +132,6 @@ function readCpuTimes() {
     threads: cpus.length,
     speedMHz: cpus[0]?.speed ?? 0,
   }
-}
-
-function clamp01(value) {
-  if (!Number.isFinite(value)) return 0
-  return Math.min(1, Math.max(0, value))
 }
 
 /** The network relay: one PowerShell process, one JSON line per sample. */
@@ -118,6 +151,104 @@ function netRelayScript(intervalSeconds) {
     "  '{\"rx\":' + [math]::Round($rx) + ',\"tx\":' + [math]::Round($tx) + ',\"n\":' + $n + ',\"perf\":' + $perf + '}'",
     '}',
   ].join('\n')
+}
+
+/**
+ * vm_stat pages. macOS' "Memory Used" (Activity Monitor) is
+ * App Memory (anonymous − purgeable) + Wired + Compressed, so the page
+ * classes are combined that way instead of total − free, which counts every
+ * cached page and reads close to 100 % on a healthy Mac.
+ */
+function parseVmStat(text) {
+  const pageSize = Number.parseInt(text.match(/page size of (\d+)/)?.[1] ?? '', 10)
+  if (!pageSize) return null
+  const pages = (label) => {
+    const match = text.match(new RegExp(`^${label}:\\s+(\\d+)\\.`, 'm'))
+    return match ? Number.parseInt(match[1], 10) : null
+  }
+  const anonymous = pages('Anonymous pages')
+  const wired = pages('Pages wired down')
+  const compressor = pages('Pages occupied by compressor')
+  if (anonymous == null || wired == null || compressor == null) return null
+  const purgeable = pages('Pages purgeable') ?? 0
+  return { usedBytes: Math.max(0, anonymous - purgeable + wired + compressor) * pageSize }
+}
+
+/** `total = 7168.00M used = 6484.62M free = 683.38M (encrypted)` */
+function parseSwapUsage(text) {
+  const size = (match) => (match ? Number.parseFloat(match[1]) * (match[2] === 'G' ? 1024 ** 3 : MIB) : null)
+  return {
+    used: size(text.match(/used = ([\d.]+)([MG])/)),
+    total: size(text.match(/total = ([\d.]+)([MG])/)),
+  }
+}
+
+/**
+ * netstat -ibn lists every address of every interface; only the link-layer
+ * row (`<Link#N>`) carries the counters, and using it once per interface keeps
+ * the totals from being double counted. Loopback, tunnels and wireless side
+ * channels are skipped so the numbers match what the user thinks of as their
+ * network connection.
+ */
+function parseNetstat(text) {
+  const totals = new Map()
+  for (const line of text.split('\n')) {
+    const parts = line.trim().split(/\s+/)
+    if (parts.length < 10 || !parts[2]?.startsWith('<Link#')) continue
+    const name = parts[0].replace(/\*$/, '')
+    if (DARWIN_IFACE_SKIP.test(name)) continue
+    const rx = Number(parts[6])
+    const tx = Number(parts[9])
+    if (!Number.isFinite(rx) || !Number.isFinite(tx)) continue
+    totals.set(name, { rx, tx })
+  }
+  return totals
+}
+
+/**
+ * IOAccelerator exposes the driver's PerformanceStatistics on both Apple
+ * Silicon (AGX) and Intel/AMD Macs. Apple GPUs share system memory, so
+ * `In use system memory` is reported as the GPU working set and `memTotal`
+ * stays null (there is no separate VRAM pool).
+ */
+function parseAccelerator(text) {
+  const model = text.match(/"model" = "([^"]+)"/)?.[1]?.trim() || ''
+  const cores = Number.parseInt(text.match(/"gpu-core-count" = (\d+)/)?.[1] ?? '', 10)
+  let best = null
+  const blockRe = /"PerformanceStatistics" = \{([^}]*)\}/g
+  let block
+  while ((block = blockRe.exec(text)) !== null) {
+    const stats = {}
+    const pairRe = /"([^"]+)"\s*=\s*"?([^",}]*)"?/g
+    let pair
+    while ((pair = pairRe.exec(block[1])) !== null) {
+      const value = Number.parseFloat(pair[2])
+      if (Number.isFinite(value)) stats[pair[1].trim()] = value
+    }
+    const usage = Number.isFinite(stats['Device Utilization %'])
+      ? stats['Device Utilization %']
+      : stats['Renderer Utilization %']
+    if (!Number.isFinite(usage)) continue
+    const memUsed = Number.isFinite(stats['In use system memory']) ? stats['In use system memory'] : null
+    if (!best || usage > best.usage || (usage === best.usage && (memUsed ?? 0) > (best.memUsed ?? 0))) {
+      best = { usage, memUsed }
+    }
+  }
+  if (!best) return null
+  const apple = /^Apple/i.test(model)
+  return {
+    vendor: apple ? 'apple' : 'ioreg',
+    name: model || 'GPU',
+    cores: Number.isFinite(cores) ? cores : null,
+    usage: clamp01(best.usage / 100),
+    memUsed: best.memUsed,
+    memTotal: null,
+    shared: apple,
+    tempC: null,
+    powerW: null,
+    fanPct: null,
+    clockMHz: null,
+  }
 }
 
 export const inject = ['webServer']
@@ -150,12 +281,21 @@ export function apply(ctx, config) {
     lastSampleAt: 0,
     prevNetDev: null,
     prevNetAt: 0,
+    /** macOS: previous per-interface netstat counters and when they were read. */
+    prevNetIfaces: null,
+    netSampledAt: 0,
+    /** macOS: cached vm_stat reading (the command costs ~5 ms). */
+    mem: null,
+    memAt: 0,
+    swap: null,
+    swapAt: 0,
     /** `% Processor Performance` from the network relay, relative to nominal. */
     perfPct: null,
   }
 
   /** Physical core count; `os.cpus()` only reports logical processors. */
   let physicalCores = null
+  let coreSplit = null
   let coresProbeStarted = false
   let coresChild = null
   const nominalMHz = os.cpus()[0]?.speed ?? 0
@@ -163,6 +303,7 @@ export function apply(ctx, config) {
   let active = false
   let lastSeen = 0
   let gpuChild = null
+  let gpuTimer = null
   let netChild = null
   let lhmTimer = null
   let lhmBackoffUntil = 0
@@ -207,6 +348,21 @@ export function apply(ctx, config) {
     }
     const usage = totalSum > 0 ? clamp01(1 - idleSum / totalSum) : 0
     state.prevCpu = next
+    // A reading taken immediately after the HUD wakes up can span only a few
+    // milliseconds, where the per-tick rounding dominates and every core
+    // looks saturated. Reuse the previous value instead of flashing 100 %.
+    const minTotal = (next.list.length * Math.max(250, cfg.intervalMs)) / 2
+    if (totalSum < minTotal) {
+      if (state.lastCpu) return state.lastCpu
+      state.lastCpu = {
+        usage: 0,
+        perCore: next.list.map(() => 0),
+        model: next.model,
+        threads: next.threads,
+        speedMHz: next.speedMHz,
+      }
+      return state.lastCpu
+    }
     state.lastCpu = {
       usage,
       perCore,
@@ -244,6 +400,50 @@ export function apply(ctx, config) {
     }
   }
 
+  /** macOS memory: vm_stat, Activity Monitor semantics, refreshed at ~1 Hz. */
+  function macMemory(now) {
+    if (now - state.memAt < 800) return state.mem
+    state.memAt = now
+    try {
+      state.mem = parseVmStat(execText(DARWIN_TOOLS.vmStat, []))
+    } catch {
+      state.mem = null
+    }
+    return state.mem
+  }
+
+  /** Swap is slow-moving; one sysctl per five seconds is plenty. */
+  function macSwap(now) {
+    if (now - state.swapAt < 5000) return
+    state.swapAt = now
+    try {
+      state.swap = parseSwapUsage(execText(DARWIN_TOOLS.sysctl, ['-n', 'vm.swapusage']))
+    } catch {
+      /* keep the previous reading */
+    }
+  }
+
+  function readMemory(now) {
+    const total = os.totalmem()
+    if (IS_DARWIN) {
+      macSwap(now)
+      const mac = macMemory(now)
+      if (mac) {
+        const used = Math.min(total, mac.usedBytes)
+        return {
+          total,
+          used,
+          usage: total > 0 ? used / total : 0,
+          source: 'vm_stat',
+          swapUsed: state.swap?.used ?? null,
+          swapTotal: state.swap?.total ?? null,
+        }
+      }
+    }
+    const free = os.freemem()
+    return { total, used: total - free, usage: total > 0 ? (total - free) / total : 0 }
+  }
+
   /** Linux fallback: /proc/net/dev is cheaper than any child process. */
   function sampleNetProc(now) {
     if (state.prevNetDev == null) {
@@ -251,7 +451,7 @@ export function apply(ctx, config) {
         const totals = readProcNetDev()
         state.prevNetDev = totals
         state.prevNetAt = now
-        setProbe('net', { state: 'ok', reason: null })
+        setProbe('net', { state: 'sampling', reason: '正在建立网络基线' })
       } catch {
         setProbe('net', { state: 'unavailable', reason: '无法读取 /proc/net/dev' })
       }
@@ -290,12 +490,48 @@ export function apply(ctx, config) {
     return { rx, tx }
   }
 
+  /** macOS network: diff the cumulative netstat counters, per interface. */
+  function sampleNetDarwin(now) {
+    if (state.netSampledAt && now - state.netSampledAt < Math.max(1000, cfg.netIntervalMs)) return
+    let current
+    try {
+      current = parseNetstat(execText(DARWIN_TOOLS.netstat, ['-ibn']))
+    } catch (error) {
+      setProbe('net', { state: 'unavailable', reason: `netstat 读取失败：${error?.message ?? error}` })
+      return
+    }
+    if (!current.size) {
+      setProbe('net', { state: 'unavailable', reason: 'netstat 没有返回接口计数器' })
+      return
+    }
+    const previous = state.prevNetIfaces
+    const previousAt = state.netSampledAt
+    state.prevNetIfaces = current
+    state.netSampledAt = now
+    if (!previous) {
+      setProbe('net', { state: 'sampling', reason: '正在建立网络基线' })
+      return
+    }
+    const elapsed = (now - previousAt) / 1000
+    if (elapsed <= 0) return
+    let rx = 0
+    let tx = 0
+    for (const [name, counters] of current) {
+      const before = previous.get(name)
+      if (!before) continue
+      // Interfaces that reset or wrap must not produce a negative burst.
+      rx += Math.max(0, counters.rx - before.rx)
+      tx += Math.max(0, counters.tx - before.tx)
+    }
+    state.net = { rxBps: rx / elapsed, txBps: tx / elapsed }
+    state.netAt = now
+    setProbe('net', { state: 'ok', reason: null })
+  }
+
   function sample() {
     const now = Date.now()
     const cpu = sampleCpu()
-    const total = os.totalmem()
-    const free = os.freemem()
-    const mem = { total, used: total - free, usage: total > 0 ? (total - free) / total : 0 }
+    const mem = readMemory(now)
     const gpu = freshGpu(now)
     const net = freshNet(now)
     const temps = freshTemps(now)
@@ -325,6 +561,8 @@ export function apply(ctx, config) {
         model: cpu.model,
         cores: physicalCores,
         threads: cpu.threads,
+        perfCores: coreSplit?.perf ?? null,
+        effCores: coreSplit?.eff ?? null,
         speedMHz: cpu.speedMHz,
         clockMHz:
           state.perfPct != null && nominalMHz > 0
@@ -415,17 +653,52 @@ export function apply(ctx, config) {
     setProbe('gpu', { state: 'ok', reason: null })
   }
 
+  /**
+   * macOS GPU: ioreg is a one-shot read and cheap enough to poll. Apple
+   * Silicon has no nvidia-smi and no unprivileged temperature source, so the
+   * reading is utilisation plus the unified-memory working set.
+   */
+  function startGpuDarwin() {
+    if (gpuTimer) return
+    const poll = () => {
+      let text
+      try {
+        text = execText(DARWIN_TOOLS.ioreg, ['-r', '-d', '1', '-w', '0', '-c', 'IOAccelerator'])
+      } catch (error) {
+        setProbe('gpu', { state: 'unavailable', reason: `ioreg 读取失败：${error?.message ?? error}` })
+        return
+      }
+      const gpu = parseAccelerator(text)
+      if (!gpu) {
+        setProbe('gpu', { state: 'unavailable', reason: 'IORegistry 中没有可用的 GPU 统计（IOAccelerator）' })
+        return
+      }
+      state.gpu = gpu
+      state.gpuAt = Date.now()
+      setProbe('gpu', { state: 'ok', reason: null })
+    }
+    poll()
+    gpuTimer = setInterval(poll, Math.max(500, cfg.gpuIntervalMs))
+    gpuTimer.unref?.()
+  }
+
   function startNet() {
+    if (IS_DARWIN) {
+      sampleNetDarwin(Date.now())
+      return
+    }
     if (netChild) return
-    if (process.platform !== 'win32') {
-      if (process.platform === 'linux') {
+    if (!IS_WIN32) {
+      if (IS_LINUX) {
         sampleNetProc(Date.now())
-        setProbe('net', { state: state.net ? 'ok' : 'idle', reason: null })
       } else {
-        setProbe('net', { state: 'unavailable', reason: `当前平台（${process.platform}）暂不支持网络速率` })
+        setProbe('net', { state: 'unavailable', reason: `当前平台（${PLATFORM}）暂不支持网络速率` })
       }
       return
     }
+    // The relay prints its first line only after one sample interval, so say
+    // "sampling" rather than "unavailable" until a reading has arrived.
+    setProbe('net', { state: 'sampling', reason: '正在启动网络计数器' })
     const interval = Math.max(1, Math.round(cfg.netIntervalMs / 1000))
     let child
     try {
@@ -550,6 +823,7 @@ export function apply(ctx, config) {
         cpuC: cpuTemp ? num(cpuTemp.value) : null,
         fanRpm: boardFans.length ? Math.max(...boardFans) : null,
         cpuPowerW: cpuPower ? num(cpuPower.value) : null,
+        source: 'LibreHardwareMonitor',
       }
       if (next.cpuC == null && next.fanRpm == null && next.cpuPowerW == null) {
         setProbe('temps', { state: 'unavailable', reason: 'LibreHardwareMonitor 未暴露温度传感器' })
@@ -590,7 +864,28 @@ export function apply(ctx, config) {
 
   function probeCores() {
     if (coresProbeStarted || physicalCores != null) return
-    if (process.platform !== 'win32') return
+    if (IS_DARWIN) {
+      // Both sysctl calls together cost a few milliseconds, so they run
+      // synchronously and the very first snapshot already knows the layout.
+      coresProbeStarted = true
+      try {
+        const count = Number.parseInt(execText(DARWIN_TOOLS.sysctl, ['-n', 'hw.physicalcpu']).trim(), 10)
+        if (Number.isFinite(count) && count > 0 && count <= 2048) physicalCores = count
+        // Apple Silicon splits its cores into performance and efficiency
+        // clusters; Intel Macs do not expose the perflevel keys.
+        const out = execText(DARWIN_TOOLS.sysctl, [
+          '-n',
+          'hw.perflevel0.physicalcpu',
+          'hw.perflevel1.physicalcpu',
+        ])
+        const [perf, eff] = out.trim().split(/\s+/).map(Number)
+        if (Number.isFinite(perf) && Number.isFinite(eff)) coreSplit = { perf, eff }
+      } catch {
+        coresProbeStarted = false
+      }
+      return
+    }
+    if (!IS_WIN32) return
     coresProbeStarted = true
     let child
     try {
@@ -633,9 +928,19 @@ export function apply(ctx, config) {
     if (active) return
     active = true
     probeCores()
-    startGpu()
+    if (IS_DARWIN) startGpuDarwin()
+    else startGpu()
     startNet()
-    startLhm()
+    if (IS_DARWIN) {
+      // SMC and powermetrics both require root; there is no unprivileged
+      // temperature API on macOS, so say so instead of inventing numbers.
+      setProbe('temps', {
+        state: 'unavailable',
+        reason: 'macOS 不向非特权进程提供温度、风扇与封装功耗（需要 root 的 powermetrics / SMC）',
+      })
+    } else {
+      startLhm()
+    }
   }
 
   function stop() {
@@ -646,8 +951,19 @@ export function apply(ctx, config) {
     gpuChild = null
     netChild = null
     coresChild = null
+    if (gpuTimer) clearInterval(gpuTimer)
     if (lhmTimer) clearInterval(lhmTimer)
+    gpuTimer = null
     lhmTimer = null
+    // Do not average the next reading over the idle gap: drop the baselines
+    // and the last reading so the HUD shows "sampling…" on resume instead of
+    // a rate averaged over minutes of silence.
+    state.prevNetIfaces = null
+    state.netSampledAt = 0
+    state.prevNetDev = null
+    state.prevNetAt = 0
+    state.net = null
+    state.netAt = 0
   }
 
   function touch() {
@@ -681,8 +997,9 @@ export function apply(ctx, config) {
           if (action === '' || action === 'snapshot') {
             touch()
             const now = Date.now()
-            if (state.net == null && process.platform === 'linux' && action === 'snapshot') {
-              sampleNetProc(now)
+            if (action === 'snapshot') {
+              if (IS_LINUX && state.net == null) sampleNetProc(now)
+              if (IS_DARWIN) sampleNetDarwin(now)
             }
             if (!state.snapshot || now - state.lastSampleAt >= cfg.intervalMs) sample()
             const requested = Number.parseInt(url.searchParams.get('window') ?? '60', 10)

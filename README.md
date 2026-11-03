@@ -21,10 +21,10 @@
 
 | 行 | 内容 | 数据来源 |
 |---|---|---|
-| 处理器 | 总占用、逐核占用、60 秒趋势、封装温度、封装功耗、风扇 | `os.cpus()` 差分 + Windows 性能计数器 + LibreHardwareMonitor |
-| 显卡 | 利用率、显存、温度、功耗、频率 | `nvidia-smi`（缺省时回退 LibreHardwareMonitor） |
-| 内存 | 已用/总量与占用率 | `os.totalmem` / `os.freemem` |
-| 网络 | 上下行实时速率 | Windows `Get-Counter`（Linux 走 `/proc/net/dev`） |
+| 处理器 | 总占用、逐核占用、60 秒趋势、封装温度、封装功耗、风扇 | `os.cpus()` 差分；温度用 LibreHardwareMonitor，macOS 不提供 |
+| 显卡 | 利用率、显存/统一内存、温度、功耗、频率 | `nvidia-smi`；macOS 走 `ioreg -c IOAccelerator` |
+| 内存 | 已用/总量、占用率、交换空间 | `os.totalmem`；macOS 走 `vm_stat` + `sysctl vm.swapusage` |
+| 网络 | 上下行实时速率 | Windows `Get-Counter`；macOS `netstat -ibn`；Linux `/proc/net/dev` |
 
 设计上的几点取舍：
 
@@ -42,13 +42,13 @@ plugin_manager  install_bundle  target = git+https://github.com/Zmh-Freedom/dsh-
 想固定在某个版本上，加上 tag：
 
 ```text
-plugin_manager  install_bundle  target = git+https://github.com/Zmh-Freedom/dsh-plugin-system-pulse.git#v0.1.1
+plugin_manager  install_bundle  target = git+https://github.com/Zmh-Freedom/dsh-plugin-system-pulse.git#v0.2.0
 ```
 
 也可以把仓库克隆或解压到本地任意目录，用路径安装（适合需要改代码的场合）：
 
 ```text
-plugin_manager  install_bundle  target = D:\path\to\dsh-plugin-system-pulse
+plugin_manager  install_bundle  target = /path/to/dsh-plugin-system-pulse
 ```
 
 装好后重启 DSH（Host 半体需要重新加载），刷新页面即可看到浮窗。
@@ -79,7 +79,7 @@ plugin_manager  install_bundle  target = D:\path\to\dsh-plugin-system-pulse
 | `lhmUrl` | `http://localhost:8085/data.json` | LibreHardwareMonitor 的 Web Server 地址 |
 | `gpuStaleMs` / `netStaleMs` / `tempsStaleMs` | `8000` / `12000` / `12000` | 超过此时长未更新即标记为 stale |
 
-## CPU 温度需要一个传感器源
+## Windows：CPU 温度需要一个传感器源
 
 Windows 没有向用户态暴露 CPU 温度的接口（WMI 温区、PDH 温区计数器、`Win32_TemperatureProbe` 在多数台式机上都是空的）。读取 SMU/SuperIO 需要 ring0，所以本插件复用 [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) 的已签名驱动与其 HTTP 接口：
 
@@ -94,15 +94,23 @@ Windows 没有向用户态暴露 CPU 温度的接口（WMI 温区、PDH 温区�
 | 功能 | Windows | Linux | macOS |
 |---|---|---|---|
 | CPU / 内存 | ✅ | ✅ | ✅ |
-| 网络速率 | ✅ | ✅（`/proc/net/dev`） | — |
-| GPU | ✅（NVIDIA） | ✅（NVIDIA） | ✅（NVIDIA） |
-| CPU 温度 / 风扇 / 功耗 | 需 LHM | — | — |
+| 网络速率 | ✅ | ✅（`/proc/net/dev`） | ✅（`netstat -ibn`） |
+| GPU | ✅ NVIDIA（或 LHM） | ✅ NVIDIA | ✅ Apple Silicon / Intel 核显（`ioreg`） |
+| CPU 温度 / 风扇 / 功耗 | ✅ 需 LHM | — | —（需 root 的 powermetrics / SMC） |
+| 换页 / 交换空间 | — | — | ✅ |
+
+### macOS
+
+- **内存口径**：`os.freemem()` 在 macOS 上只统计 free pages，会把一台健康机器的占用显示成 99%。插件改用 `vm_stat`，按活动监视器的算法计算：`已用 =（匿名页 − 可清除页 + 联动页 + 压缩页）× 页大小`，同时用 `sysctl vm.swapusage` 读出交换空间。
+- **GPU**：Apple Silicon 没有 `nvidia-smi`，统一内存也没有独立的显存池，因此改为轮询 `ioreg -c IOAccelerator`，取 `Device Utilization %` 作为利用率、`In use system memory` 作为 GPU 工作集，`GPU 核心数` 从 `gpu-core-count` 读出。
+- **核心结构**：`hw.perflevel0/1.physicalcpu` 给出性能核与能效核数量，卡片显示成 `4P+6E` 而不是容易误解的 `10C/10T`。
+- **温度/风扇/功耗**：macOS 只对 root 开放这些传感器（`powermetrics` 与 SMC），非特权进程拿不到任何可靠读数，所以这三项显示 `—` 并说明原因，不会猜测数值。
 
 ## 已知限制
 
 - 主板风扇通道没接转速计时会读到 `0 RPM`，此时行内不显示风扇，原始值在悬停提示里。
-- 显卡目前只覆盖 NVIDIA（`nvidia-smi`）；其它显卡在装了 LibreHardwareMonitor 时会用它兜底。
-- 插件的 HTTP 路由不校验来源，请只在可信的本机环境启用。
+- 显卡在 Windows/Linux 上只覆盖 NVIDIA（`nvidia-smi`）；其它显卡在装了 LibreHardwareMonitor 时会用它兜底。
+- HTTP 路由只接受同源请求（校验 `Origin`），但仍然请只在可信的本机环境启用。
 
 ## 许可
 

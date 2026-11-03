@@ -78,10 +78,12 @@ window.__ModuleLoader__.load({
       fan: 'fan',
       offline: 'offline',
       unavailable: 'unavailable',
+      sampling: 'sampling…',
       collapse: 'Collapse',
       expand: 'Expand',
       up: 'up',
       vram: 'VRAM',
+      shared: 'unified memory',
     }
     const ZH = {
       title: '系统脉搏',
@@ -93,10 +95,12 @@ window.__ModuleLoader__.load({
       fan: '风扇',
       offline: '连接中断',
       unavailable: '不可用',
+      sampling: '采样中…',
       collapse: '收起',
       expand: '展开',
       up: '运行',
       vram: '显存',
+      shared: '统一内存',
     }
 
     function loadPos() {
@@ -384,6 +388,15 @@ window.__ModuleLoader__.load({
           const cpuTone = toneFor(cpu?.usage, 0.65, 0.85)
           const memTone = toneFor(mem?.usage, 0.78, 0.9)
           const cpuMark = Math.round((cpu?.usage ?? 0) * 360)
+          const platform = snapshot?.host?.platform ?? ''
+
+          // A probe that has not delivered its first reading yet is still
+          // starting up (the network relay needs one sample interval, ioreg
+          // and netstat need their first delta), which is not the same thing
+          // as being unavailable on this machine.
+          const pending = (probe) =>
+            probe?.state === 'idle' || probe?.state === 'sampling' || probe?.state === 'starting'
+          const ghostText = (probe) => (pending(probe) ? t('sampling') : probe?.reason ?? t('unavailable'))
 
           if (collapsed) {
             return h(
@@ -444,47 +457,73 @@ window.__ModuleLoader__.load({
               ].filter(Boolean)
             : []
 
+          // Apple Silicon reports its physical cores split into performance and
+          // efficiency clusters; "10C/10T" would read like hyper-threading that
+          // does not exist there.
+          const cpuShape = !cpu
+            ? ''
+            : cpu.perfCores && cpu.effCores
+              ? `${cpu.perfCores}P+${cpu.effCores}E`
+              : cpu.cores
+                ? `${cpu.cores}C/${cpu.threads}T`
+                : `${cpu.threads}T`
+          const cpuClockNote = !cpu
+            ? ''
+            : cpu.clockMHz
+              ? `实时 ${(cpu.clockMHz / 1000).toFixed(2)} GHz · 标称 ${(cpu.speedMHz / 1000).toFixed(1)} GHz`
+              : platform === 'darwin'
+                ? `标称 ${(cpu.speedMHz / 1000).toFixed(1)} GHz（Apple Silicon 不向非特权进程提供实时频率）`
+                : `标称 ${(cpu.speedMHz / 1000).toFixed(1)} GHz（实时频率需要系统性能计数器）`
+
           const cpuMeta = cpu
             ? {
                 // Thermal readings take the slot when LibreHardwareMonitor is
                 // reachable; otherwise fall back to the structure and clock.
                 text: cpuThermal.length
                   ? cpuThermal.join(' · ')
-                  : [
-                      cpu.cores ? `${cpu.cores}C/${cpu.threads}T` : `${cpu.threads}T`,
-                      `${((cpu.clockMHz ?? cpu.speedMHz) / 1000).toFixed(2)}G`,
-                    ].join(' · '),
+                  : `${cpuShape} · ${((cpu.clockMHz ?? cpu.speedMHz) / 1000).toFixed(2)}G`,
                 title: [
                   cpu.model,
-                  cpu.cores
-                    ? `${cpu.cores} 物理核 / ${cpu.threads} 逻辑处理器`
-                    : `${cpu.threads} 逻辑处理器`,
-                  cpu.clockMHz
-                    ? `实时 ${(cpu.clockMHz / 1000).toFixed(2)} GHz · 标称 ${(cpu.speedMHz / 1000).toFixed(1)} GHz`
-                    : `标称 ${(cpu.speedMHz / 1000).toFixed(1)} GHz（实时频率需要 Windows 性能计数器）`,
+                  cpu.perfCores && cpu.effCores
+                    ? `${cpu.cores} 物理核：${cpu.perfCores} 性能核 + ${cpu.effCores} 能效核`
+                    : cpu.cores
+                      ? `${cpu.cores} 物理核 / ${cpu.threads} 逻辑处理器`
+                      : `${cpu.threads} 逻辑处理器`,
+                  cpuClockNote,
                   temps
                     ? [
                         temps.cpuC != null ? `封装温度 ${Math.round(temps.cpuC)}°C（Core Tctl/Tdie）` : null,
                         temps.cpuPowerW != null ? `封装功耗 ${Math.round(temps.cpuPowerW)}W（Package）` : null,
                         temps.fanRpm != null ? `主板风扇 ${Math.round(temps.fanRpm)} RPM（SuperIO）` : null,
-                        '温度来源：LibreHardwareMonitor',
+                        `温度来源：${temps.source ?? 'LibreHardwareMonitor'}`,
                       ]
                         .filter(Boolean)
                         .join('\n')
-                    : `温度不可用：${health?.temps?.reason ?? t('unavailable')}`,
+                    : `温度不可用：${ghostText(health?.temps)}`,
                 ].join('\n'),
               }
             : null
 
           const gpuMeta = gpu
             ? {
-                text: [gpu.tempC != null ? `${Math.round(gpu.tempC)}°C` : null, gpu.powerW != null ? `${Math.round(gpu.powerW)}W` : null]
-                  .filter(Boolean)
-                  .join(' · '),
+                // NVIDIA cards expose temperature and power; the macOS probe
+                // has neither, so the slot shows the unified-memory working set.
+                text: [
+                  gpu.tempC != null ? `${Math.round(gpu.tempC)}°C` : null,
+                  gpu.powerW != null ? `${Math.round(gpu.powerW)}W` : null,
+                ].filter(Boolean).join(' · ') ||
+                  (gpu.memUsed != null
+                    ? gpu.memTotal != null
+                      ? `${gib(gpu.memUsed)}/${gib(gpu.memTotal)}G`
+                      : `${gib(gpu.memUsed)}G`
+                    : gpu.cores
+                      ? `${gpu.cores} 核`
+                      : ''),
                 title: [
                   gpu.name,
-                  gpu.memUsed != null && gpu.memTotal != null
-                    ? `${t('vram')} ${gib(gpu.memUsed)} / ${gib(gpu.memTotal)} GB`
+                  gpu.cores ? `${gpu.cores} 个 GPU 核心` : null,
+                  gpu.memUsed != null
+                    ? `${gpu.shared ? t('shared') : t('vram')} ${gib(gpu.memUsed)}${gpu.memTotal != null ? ` / ${gib(gpu.memTotal)}` : ''} GB`
                     : null,
                   gpu.clockMHz != null ? `${gpu.clockMHz} MHz` : null,
                 ]
@@ -493,7 +532,20 @@ window.__ModuleLoader__.load({
               }
             : null
 
-          const memMeta = mem ? { text: `${gib(mem.used)}/${gib(mem.total)}G` } : null
+          const memMeta = mem
+            ? {
+                text: `${gib(mem.used)}/${gib(mem.total)}G`,
+                title: [
+                  `内存 ${gib(mem.used)} / ${gib(mem.total)} GB`,
+                  mem.source === 'vm_stat' ? '口径：vm_stat（与活动监视器一致：匿名 − 可清除 + 联动 + 压缩）' : null,
+                  mem.swapTotal != null
+                    ? `交换空间 ${gib(mem.swapUsed ?? 0)} / ${gib(mem.swapTotal)} GB`
+                    : null,
+                ]
+                  .filter(Boolean)
+                  .join('\n'),
+              }
+            : null
 
           const anyBad = failed
 
@@ -539,7 +591,7 @@ window.__ModuleLoader__.load({
                 h('div', { className: 'sp-trend' }, h(Spark, { points: history.map((point) => point.c), tone: cpuTone })),
                 gpu
                   ? row(t('gpu'), pct(gpu.usage), gpu.usage, toneFor(gpu.usage, 0.75, 0.95), gpuMeta, false)
-                  : row(t('gpu'), '—', null, null, { text: health?.gpu?.reason ?? t('unavailable'), title: health?.gpu?.reason ?? '' }, true),
+                  : row(t('gpu'), '—', null, null, { text: ghostText(health?.gpu), title: pending(health?.gpu) ? '' : health?.gpu?.reason ?? '' }, true),
                 row(t('mem'), pct(mem?.usage), mem?.usage ?? null, memTone, memMeta, !mem),
                 h(
                   'div',
@@ -557,7 +609,7 @@ window.__ModuleLoader__.load({
                       : h('span', { className: 'sp-num is-ghost' }, '—'),
                     net
                       ? h('span', { className: 'sp-meta', style: { fontSize: '12px' } }, `↑ ${rate(net.txBps)}`)
-                      : h('span', { className: 'sp-meta is-ghost', title: health?.net?.reason ?? '' }, health?.net?.reason ?? t('unavailable')),
+                      : h('span', { className: 'sp-meta is-ghost', title: pending(health?.net) ? '' : health?.net?.reason ?? '' }, ghostText(health?.net)),
                   ),
                 ),
               ),
