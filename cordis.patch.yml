@@ -1,0 +1,4 @@
+- insert:
+    - id: system-pulse
+      name: 'dsh-plugin-system-pulse'
+      config: {}

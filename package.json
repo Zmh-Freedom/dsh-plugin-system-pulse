@@ -1,0 +1,54 @@
+{
+  "name": "dsh-plugin-system-pulse",
+  "version": "0.1.0",
+  "description": "Floating HUD for the DSH web GUI: live CPU (per-core + 60 s trend), GPU, memory, network and CPU package temperature/power/fan.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.12.0",
+    "dsh": "^0.2.1-rc.5"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "system-monitor",
+    "hud",
+    "cpu",
+    "gpu",
+    "memory",
+    "network",
+    "temperature"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Zmh-Freedom/dsh-plugin-system-pulse.git"
+  },
+  "homepage": "https://github.com/Zmh-Freedom/dsh-plugin-system-pulse#readme",
+  "bugs": {
+    "url": "https://github.com/Zmh-Freedom/dsh-plugin-system-pulse/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg"
+  ],
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  }
+}

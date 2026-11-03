@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "System Pulse",
+    "description": "A draggable floating HUD showing live CPU, GPU, memory, network and temperature readings. Stops sampling when the HUD is closed."
+  }
+}
