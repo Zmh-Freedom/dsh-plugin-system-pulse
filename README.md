@@ -42,7 +42,7 @@ plugin_manager  install_bundle  target = git+https://github.com/Zmh-Freedom/dsh-
 想固定在某个版本上，加上 tag：
 
 ```text
-plugin_manager  install_bundle  target = git+https://github.com/Zmh-Freedom/dsh-plugin-system-pulse.git#v0.1.0
+plugin_manager  install_bundle  target = git+https://github.com/Zmh-Freedom/dsh-plugin-system-pulse.git#v0.1.1
 ```
 
 也可以把仓库克隆或解压到本地任意目录，用路径安装（适合需要改代码的场合）：
