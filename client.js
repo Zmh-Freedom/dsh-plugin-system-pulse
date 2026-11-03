@@ -1,6 +1,8 @@
-/* @local/system-pulse — draggable system HUD rendered in shell.overlay. */
+/* dsh-plugin-system-pulse — draggable system HUD rendered in shell.overlay.
+   The registration id must equal the package name: the loader keys bundles by
+   it, and a mismatch makes boot load the same bundle twice. */
 window.__ModuleLoader__.load({
-  id: '@local/system-pulse',
+  id: 'dsh-plugin-system-pulse',
   factory(require) {
     const React = require('react')
     const h = React.createElement
