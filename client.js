@@ -315,6 +315,10 @@ window.__ModuleLoader__.load({
 
           const beginDrag = (event) => {
             if (event.button !== 0) return
+            // A pointerdown on a control must reach that control. Capturing the
+            // pointer on the head would retarget the following click to the head,
+            // which is exactly why the collapse button used to look dead.
+            if (event.target?.closest?.('.sp-btn')) return
             event.preventDefault()
             event.currentTarget.setPointerCapture?.(event.pointerId)
             dragRef.current = {
