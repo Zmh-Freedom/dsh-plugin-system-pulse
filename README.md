@@ -36,10 +36,24 @@
 ## 安装
 
 ```text
-plugin_manager  install_bundle  target = dsh-plugin-system-pulse
+plugin_manager  install_bundle  target = git+https://github.com/Zmh-Freedom/dsh-plugin-system-pulse.git
+```
+
+想固定在某个版本上，加上 tag：
+
+```text
+plugin_manager  install_bundle  target = git+https://github.com/Zmh-Freedom/dsh-plugin-system-pulse.git#v0.1.0
+```
+
+也可以把仓库克隆或解压到本地任意目录，用路径安装（适合需要改代码的场合）：
+
+```text
+plugin_manager  install_bundle  target = D:\path\to\dsh-plugin-system-pulse
 ```
 
 装好后重启 DSH（Host 半体需要重新加载），刷新页面即可看到浮窗。
+
+> 安装过程会用到 `git`，请确保本机可用；插件本身零依赖、无构建步骤。
 
 ## 配置
 
