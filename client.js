@@ -53,7 +53,10 @@ window.__ModuleLoader__.load({
 .sp-cores { display: flex; gap: 2px; padding: 3px 10px 2px 47px; height: 12px; align-items: flex-end; }
 .sp-core { flex: 1; min-width: 1px; height: 3px; border-radius: 1px; background: var(--dsw-alias-border-l2); }
 .sp-foot { display: flex; gap: 6px; align-items: center; padding: 3px 10px 7px; font-size: 10px; color: var(--dsw-alias-label-tertiary); }
-.sp-foot span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sp-foot span { flex: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Only the hostname may shrink: a long name must not eat the uptime and the
+   sampling interval that follow it. */
+.sp-foot span:first-child { flex: 0 1 auto; min-width: 0; }
 .sp-dot {
   position: absolute; width: 48px; height: 48px; border-radius: 50%;
   pointer-events: auto; cursor: grab; display: grid; place-items: center;
@@ -616,7 +619,7 @@ window.__ModuleLoader__.load({
               h(
                 'div',
                 { className: 'sp-foot' },
-                h('span', null, snapshot?.host?.name ?? '—'),
+                h('span', { title: snapshot?.host?.name ?? '' }, (snapshot?.host?.name ?? '—').replace(/\.local$/, '')),
                 h('span', null, '·'),
                 h('span', null, `↑ ${uptime(snapshot?.host?.uptimeMs, t)}`),
                 h('span', null, '·'),
