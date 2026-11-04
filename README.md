@@ -114,7 +114,7 @@ Windows 没有向用户态暴露 CPU 温度的接口（WMI 温区、PDH 温区�
 
 - 主板风扇通道没接转速计时会读到 `0 RPM`，此时行内不显示风扇，原始值在悬停提示里。
 - 显卡在 Windows/Linux 上只覆盖 NVIDIA（`nvidia-smi`）；其它显卡在装了 LibreHardwareMonitor 时会用它兜底。
-- HTTP 路由会拒绝带不匹配 `Origin` 的跨站请求。没有 `Origin` 头的请求（例如本机 `curl`）会被放行，因此仍请只在可信的本机环境启用。
+- HTTP 路由会拒绝带不匹配 `Origin` 的跨站请求，并要求 `Host` 头是回环地址（`127.0.0.1`、`localhost`、`[::1]`）。没有 `Origin` 头的本机 `curl` 照常可用，但把域名解析到 `127.0.0.1` 的 DNS rebinding 页面会被 403 挡住。插件只对外提供只读 GET 接口，不写入文件、不执行命令。
 
 ## 许可
 

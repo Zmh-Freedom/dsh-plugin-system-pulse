@@ -114,11 +114,31 @@ function json(res, status, value) {
   res.end(body)
 }
 
+/** Host header of a loopback server, with or without the port. */
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]', '::1'])
+
+/**
+ * Loopback-only guard.
+ *
+ * The Origin check alone is not a boundary: it only rejects cross-site requests
+ * that bother to carry an Origin header. A DNS-rebinding page points its own
+ * hostname at 127.0.0.1, and the browser then sends a request whose Host is the
+ * attacker's name while the plugin sees an unremarkable local connection -- no
+ * Origin, or one that matches the rebound host. Requiring the Host header to be
+ * loopback closes that path, and costs the ordinary curl/case nothing.
+ */
+function loopbackRequest(req) {
+  const host = req.headers.host
+  if (!host) return false
+  const name = host.startsWith('[') ? host.slice(0, host.indexOf(']') + 1) : host.split(':')[0]
+  return LOOPBACK_HOSTS.has(name.toLowerCase())
+}
+
 /** Same-origin document fetches carry no Origin header; reject cross-site reads. */
 function sameOrigin(req, expected) {
   const origin = req.headers.origin
-  if (!origin || !expected) return true
-  return origin === expected
+  if (origin && expected && origin !== expected) return false
+  return loopbackRequest(req)
 }
 
 function num(value) {
