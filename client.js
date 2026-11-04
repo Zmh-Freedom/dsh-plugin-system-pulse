@@ -99,7 +99,6 @@ window.__ModuleLoader__.load({
 }
 .sp-hint-k { color: var(--dsw-alias-label-tertiary); font-size: 10px; margin-right: 4px; }
 .sp-hint-v { font-weight: 600; margin-right: 8px; }
-.sp-hint-more { flex-basis: 100%; color: var(--dsw-alias-label-tertiary); font-size: 10px; }
 /* Near the right edge the bubble has to grow to the left instead. */
 .sp-hint.is-left { left: auto; right: calc(100% + 8px); transform: translateY(-50%) translateX(3px); }
 /* Side by side the bubble would eat the whole screen edge, so a ring near the
@@ -126,7 +125,6 @@ window.__ModuleLoader__.load({
       vram: 'VRAM',
       shared: 'unified memory',
       ringHint: 'CPU load',
-      more: '…click to expand',
     }
     const ZH = {
       title: '系统脉搏',
@@ -145,7 +143,6 @@ window.__ModuleLoader__.load({
       vram: '显存',
       shared: '统一内存',
       ringHint: '处理器占用',
-      more: '…点击展开',
     }
 
     function loadPos() {
@@ -400,26 +397,30 @@ window.__ModuleLoader__.load({
             )
           }
 
+          // A pointer that travelled is a drag, not a click: swallow the click
+          // the browser synthesises afterwards, or dropping the dot expands the
+          // card the user was only moving. The flag has to outlive pointerup —
+          // the click arrives after it, when dragRef is already cleared.
+          const swipeClickRef = useRef(false)
+          const swallowClickAfterDrag = (event) => {
+            if (!swipeClickRef.current) return
+            swipeClickRef.current = false
+            event.preventDefault()
+            event.stopPropagation()
+          }
+
           const endDrag = (event) => {
             const drag = dragRef.current
             if (!drag) return
             dragRef.current = null
+            swipeClickRef.current = drag.moved
             setDragging(false)
             try {
-              event.currentTarget.releasePointerCapture?.(event.pointerId)
+              event.currentTarget.releasePointerCapture?.(drag.id)
             } catch {
               /* ignore */
             }
             persist()
-          }
-
-          // A pointer that travelled is a drag, not a click: swallow the click
-          // the browser synthesises afterwards, or dropping the dot expands
-          // the card the user was only moving.
-          const swallowClickAfterDrag = (event) => {
-            if (!dragRef.current?.moved) return
-            event.preventDefault()
-            event.stopPropagation()
           }
 
           const dragProps = {
@@ -533,7 +534,6 @@ window.__ModuleLoader__.load({
                   hintRow(t('gpu'), gpu ? pct(gpu.usage) : ghostText(health?.gpu)),
                   hintRow(t('mem'), mem ? pct(mem.usage) : ghostText(health?.mem)),
                   hintRow(t('net'), net ? `↓ ${rate(net.rxBps)} ↑ ${rate(net.txBps)}` : ghostText(health?.net)),
-                  h('span', { className: 'sp-hint-more' }, t('more')),
                 ),
               ),
             )
