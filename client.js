@@ -189,6 +189,7 @@ window.__ModuleLoader__.load({
       offline: 'offline',
       unavailable: 'unavailable',
       sampling: 'sampling…',
+      needsSensor: 'no sensor tool',
       collapse: 'Collapse',
       expand: 'Expand',
       up: 'up',
@@ -207,6 +208,7 @@ window.__ModuleLoader__.load({
       offline: '连接中断',
       unavailable: '不可用',
       sampling: '采样中…',
+      needsSensor: '缺少传感器工具',
       collapse: '收起',
       expand: '展开',
       up: '运行',
@@ -556,6 +558,12 @@ window.__ModuleLoader__.load({
             probe?.state === 'idle' || probe?.state === 'sampling' || probe?.state === 'starting'
           const ghostText = (probe) => (pending(probe) ? t('sampling') : probe?.reason ?? t('unavailable'))
 
+          // A tooltip is not enough when the fix is "install this": macOS and
+          // Windows both show a dash where the temperature goes, and a user who
+          // never hovers reads that as broken rather than as setup.
+          const sensorToolMissing = (probe) =>
+            probe?.state === 'unavailable' && !pending(probe) && probe?.reason != null
+
           if (collapsed) {
             const ringValue = pct(cpu?.usage)
             // Which way the bubble can open without leaving the viewport: it
@@ -695,9 +703,14 @@ window.__ModuleLoader__.load({
                 // Thermal readings take the slot once a sensor source is
                 // reporting (LHM on Windows, macmon on macOS); otherwise fall
                 // back to the core layout and clock.
+                // With no thermal reading the slot shows the shape and clock,
+                // unless a sensor source is simply missing — then say which
+                // package to install instead of leaving a bare dash.
                 text: cpuThermal.length
                   ? cpuThermal.join(' · ')
-                  : `${cpuShape} · ${((cpu.clockMHz ?? cpu.speedMHz) / 1000).toFixed(2)}G`,
+                  : sensorToolMissing(health?.temps)
+                    ? `${cpuShape} · ${t('needsSensor')}`
+                    : `${cpuShape} · ${((cpu.clockMHz ?? cpu.speedMHz) / 1000).toFixed(2)}G`,
                 title: [
                   cpu.model,
                   cpu.perfCores && cpu.effCores
