@@ -939,6 +939,9 @@ export function apply(ctx, config) {
     let pending = ''
     child.stdout?.setEncoding('utf8')
     child.stdout?.on('data', (chunk) => {
+      // A late chunk from a process we already replaced must not write into
+      // the readings of its successor.
+      if (macmonChild !== child) return
       pending += chunk
       let newline
       while ((newline = pending.indexOf('\n')) !== -1) {
@@ -955,6 +958,9 @@ export function apply(ctx, config) {
       if (pending.length > 65536) pending = ''
     })
     child.on('error', () => {
+      // Same guard as exit: stop() unhooks the reference and starts a
+      // replacement, whose probe state this callback must not overwrite.
+      if (macmonChild !== child) return
       macmonChild = null
       setProbe('temps', {
         state: 'unavailable',
@@ -962,6 +968,10 @@ export function apply(ctx, config) {
       })
     })
     child.on('exit', () => {
+      // SIGTERM from stop() arrives asynchronously: by the time this fires a
+      // newer macmon may already be running, and clearing its reference here
+      // would leak the new child -- stop() could no longer kill it.
+      if (macmonChild !== child) return
       macmonChild = null
       if (!active) return
       // Exit without stop() means it died on its own; keep the last reading
