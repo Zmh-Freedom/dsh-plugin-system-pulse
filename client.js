@@ -13,6 +13,8 @@ window.__ModuleLoader__.load({
     const COLLAPSED_KEY = 'dsh-system-pulse:collapsed'
     const CARD_W = 248
     const CARD_H = 192
+    // Pointer travel (CSS px) below which a press still counts as a click.
+    const DRAG_SLOP = 3
 
     const CSS = `
 .sp-wrap { position: absolute; width: 0; height: 0; pointer-events: none; }
@@ -322,16 +324,21 @@ window.__ModuleLoader__.load({
 
           const beginDrag = (event) => {
             if (event.button !== 0) return
-            // A pointerdown on a control must reach that control. Capturing the
-            // pointer on the head would retarget the following click to the head,
-            // which is exactly why the collapse button used to look dead.
-            if (event.target?.closest?.('.sp-btn')) return
+            // A drag surface must let real controls inside it work: the
+            // collapse button lives in the head, and capturing the pointer on
+            // the head retargets the following click away from that button.
+            // Matched on the element, not on .sp-btn: the collapsed ring is a
+            // button too, and it needs the same escape.
+            if (event.target?.closest?.('button')) return
             event.preventDefault()
             event.currentTarget.setPointerCapture?.(event.pointerId)
             dragRef.current = {
               id: event.pointerId,
               dx: event.clientX - posRef.current.x,
               dy: event.clientY - posRef.current.y,
+              x0: event.clientX,
+              y0: event.clientY,
+              moved: false,
             }
             setDragging(true)
           }
@@ -339,6 +346,12 @@ window.__ModuleLoader__.load({
           const moveDrag = (event) => {
             const drag = dragRef.current
             if (!drag || event.pointerId !== drag.id) return
+            if (
+              !drag.moved &&
+              Math.hypot(event.clientX - drag.x0, event.clientY - drag.y0) >= DRAG_SLOP
+            ) {
+              drag.moved = true
+            }
             setPos(
               clampPos(
                 { x: event.clientX - drag.dx, y: event.clientY - drag.dy },
@@ -348,7 +361,8 @@ window.__ModuleLoader__.load({
           }
 
           const endDrag = (event) => {
-            if (!dragRef.current) return
+            const drag = dragRef.current
+            if (!drag) return
             dragRef.current = null
             setDragging(false)
             try {
@@ -359,12 +373,33 @@ window.__ModuleLoader__.load({
             persist()
           }
 
+          // A pointer that travelled is a drag, not a click: swallow the click
+          // the browser synthesises afterwards, or dropping the dot expands
+          // the card the user was only moving.
+          const swallowClickAfterDrag = (event) => {
+            if (!dragRef.current?.moved) return
+            event.preventDefault()
+            event.stopPropagation()
+          }
+
           const dragProps = {
             onPointerDown: beginDrag,
             onPointerMove: moveDrag,
             onPointerUp: endDrag,
             onPointerCancel: endDrag,
             style: { touchAction: 'none' },
+          }
+
+          const collapseProps = {
+            onClick: (event) => {
+              event.stopPropagation()
+              toggle(event)
+            },
+            // Stop the press from reaching the drag surface at all. Relying on
+            // beginDrag's target check alone is not enough: in the collapsed
+            // dot the button is the dot's only child, so an unstopped press
+            // would be captured and the click retargeted to the dot.
+            onPointerDown: (event) => event.stopPropagation(),
           }
 
           const toggle = (event) => {
@@ -419,7 +454,7 @@ window.__ModuleLoader__.load({
                   },
                   title: `${t('title')} · ${pct(cpu?.usage)}`,
                   onClick: toggle,
-                  onDoubleClick: toggle,
+                  onClickCapture: swallowClickAfterDrag,
                 },
                 h('div', { className: 'sp-dot-in' }, cpu ? `${Math.round(cpu.usage * 100)}` : '—'),
               ),
@@ -571,7 +606,7 @@ window.__ModuleLoader__.load({
                 h('span', { className: 'sp-title' }, anyBad ? `${t('title')} · ${t('offline')}` : t('title')),
                 h(
                   'button',
-                  { className: 'sp-btn', onClick: toggle, title: t('collapse'), 'aria-label': t('collapse') },
+                  { className: 'sp-btn', ...collapseProps, title: t('collapse'), 'aria-label': t('collapse') },
                   '–',
                 ),
               ),
