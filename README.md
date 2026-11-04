@@ -1,6 +1,6 @@
 # System Pulse · 系统脉搏
 
-一块浮在 DSH Web 界面右上角的实时系统监控卡片。拖标题栏可移动、位置会记住；点 `–` 收成一个显示 CPU 占用的小圆环，点圆环再展开。
+一块浮在 DSH 界面一角（默认右下，可拖到任意位置）的实时系统监控卡片。拖标题栏可移动、位置会记住；点 `–` 收成一个显示 CPU 占用的小圆环，再点圆环展开。
 
 ![系统脉搏浮窗：处理器 31% · 53°C · 70W，显卡 8% · 49°C · 70W，内存 63%](docs/preview.png)
 
@@ -30,7 +30,7 @@
 
 - **1 Hz 轮询**而不是 SSE：一个 `GET /api/system-pulse/snapshot` 就能拿全量数据，够快也够简单。
 - **服务端算好百分比**，客户端只画。历史环形缓冲在服务端，刷新页面立刻有趋势线。
-- **空闲自动停机**：面板发起最后一次请求 20 秒后，`nvidia-smi` 与 PowerShell 子进程一起被杀掉，插件回到零开销。
+- **空闲自动停机**：面板发起最后一次请求 20 秒后，采样定时器与 `nvidia-smi`、PowerShell 等常驻子进程一起停掉，插件回到零开销。
 - **拿不到的指标就显示 `—` 并说明原因**，不猜数字。
 
 ## 安装
@@ -39,11 +39,13 @@
 plugin_manager  install_bundle  target = git+https://github.com/Zmh-Freedom/dsh-plugin-system-pulse.git
 ```
 
-想固定在某个版本上，加上 tag：
+想固定在某个版本上，加上 tag（下面沿用 `plugin_manager` 的 `<包名>@<版本>` 写法）：
 
 ```text
-plugin_manager  install_bundle  target = git+https://github.com/Zmh-Freedom/dsh-plugin-system-pulse.git#v0.2.0
+plugin_manager  install_bundle  target = dsh-plugin-system-pulse@0.2.0
 ```
+
+> 也可以写成 `git+https://github.com/Zmh-Freedom/dsh-plugin-system-pulse.git#<tag>`，前提是仓库里确实打了这个 tag。
 
 也可以把仓库克隆或解压到本地任意目录，用路径安装（适合需要改代码的场合）：
 
@@ -51,7 +53,7 @@ plugin_manager  install_bundle  target = git+https://github.com/Zmh-Freedom/dsh-
 plugin_manager  install_bundle  target = /path/to/dsh-plugin-system-pulse
 ```
 
-装好后重启 DSH（Host 半体需要重新加载），刷新页面即可看到浮窗。
+装好后重启 DSH（Host 半体需要重新加载），或在安装器支持热挂载时直接刷新页面。
 
 > 安装过程会用到 `git`，请确保本机可用；插件本身零依赖、无构建步骤。
 
@@ -73,11 +75,13 @@ plugin_manager  install_bundle  target = /path/to/dsh-plugin-system-pulse
 | `intervalMs` | `1000` | 客户端轮询间隔（毫秒） |
 | `gpuIntervalMs` | `2000` | `nvidia-smi` 采样间隔 |
 | `netIntervalMs` | `3000` | 网络计数器采样间隔 |
-| `lhmIntervalMs` | `3000` | 温度探测间隔 |
-| `idleStopMs` | `20000` | 无请求多久后停掉所有子进程 |
+| `lhmIntervalMs` | `3000` | 温度探测间隔（Windows） |
+| `idleStopMs` | `20000` | 无请求多久后停掉采样与子进程 |
 | `historySize` | `180` | 服务端保留的历史点数 |
 | `lhmUrl` | `http://localhost:8085/data.json` | LibreHardwareMonitor 的 Web Server 地址 |
 | `gpuStaleMs` / `netStaleMs` / `tempsStaleMs` | `8000` / `12000` / `12000` | 超过此时长未更新即标记为 stale |
+
+所有数值在加载时会被夹到安全区间：`intervalMs` 250–60000、`gpuIntervalMs` 500–60000、`netIntervalMs` 与 `lhmIntervalMs` 至少 1000、`idleStopMs` 至少 5000、`historySize` 1–3600。填错类型或越界不会让采样循环卡死，只会被拉回边界值。
 
 ## Windows：CPU 温度需要一个传感器源
 
@@ -110,7 +114,7 @@ Windows 没有向用户态暴露 CPU 温度的接口（WMI 温区、PDH 温区�
 
 - 主板风扇通道没接转速计时会读到 `0 RPM`，此时行内不显示风扇，原始值在悬停提示里。
 - 显卡在 Windows/Linux 上只覆盖 NVIDIA（`nvidia-smi`）；其它显卡在装了 LibreHardwareMonitor 时会用它兜底。
-- HTTP 路由只接受同源请求（校验 `Origin`），但仍然请只在可信的本机环境启用。
+- HTTP 路由会拒绝带不匹配 `Origin` 的跨站请求。没有 `Origin` 头的请求（例如本机 `curl`）会被放行，因此仍请只在可信的本机环境启用。
 
 ## 许可
 
