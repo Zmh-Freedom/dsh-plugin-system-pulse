@@ -760,6 +760,10 @@ export function apply(ctx, config) {
       if (buffer.length > 8192) buffer = ''
     })
     child.on('error', (error) => {
+      // A stop()/start() pair can already have replaced this child; clearing
+      // the reference then would leak the replacement, which stop() could no
+      // longer kill. Same guard as the exit handler below.
+      if (gpuChild !== child) return
       gpuChild = null
       setProbe('gpu', {
         state: 'unavailable',
@@ -869,6 +873,7 @@ export function apply(ctx, config) {
       if (buffer.length > 16384) buffer = ''
     })
     child.on('error', (error) => {
+      if (netChild !== child) return
       netChild = null
       setProbe('net', {
         state: 'unavailable',
@@ -1144,9 +1149,11 @@ export function apply(ctx, config) {
       if (out.length > 4096) out = ''
     })
     child.on('error', () => {
+      if (coresChild !== child) return
       coresProbeStarted = false
     })
     child.on('exit', () => {
+      if (coresChild !== child) return
       coresChild = null
       const count = Number.parseInt(out.trim(), 10)
       if (Number.isFinite(count) && count > 0 && count <= 2048) {
