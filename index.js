@@ -90,14 +90,17 @@ const DARWIN_TOOLS = {
  * IOHIDEventSystem, which — unlike SMC and powermetrics — needs no root. It
  * streams one JSON object per line, so it is polled as a child process.
  *
- * Not in /usr/bin, and a GUI app inherits almost no PATH: look in the two
- * placeholders Homebrew uses, then fall back to a bare name so a user who
- * installed it some other way still gets it picked up.
+ * Not in /usr/bin, and a GUI app inherits almost no PATH: look in every place
+ * Homebrew may have parked it (Apple Silicon prefix, Intel prefix, and the
+ * per-formula bin a keg-only install leaves behind) plus MacPorts. Absolute
+ * paths only -- a bare name would be resolved against the GUI app's PATH,
+ * which normally has none of these directories on it.
  */
 const DARWIN_MACMON_CANDIDATES = [
   '/opt/homebrew/bin/macmon',
   '/usr/local/bin/macmon',
-  'macmon',
+  '/opt/homebrew/opt/macmon/bin/macmon',
+  '/opt/local/bin/macmon',
 ]
 
 /** Same idea for the BSD interface names netstat reports on macOS. */
@@ -913,18 +916,23 @@ export function apply(ctx, config) {
   function startTempsDarwin() {
     if (macmonChild) return
     const binary = DARWIN_MACMON_CANDIDATES.find((candidate) => {
-      if (candidate.includes('/')) {
-        try {
-          return statSync(candidate).isFile()
-        } catch {
-          return false
-        }
+      if (!candidate.includes('/')) return false
+      try {
+        return statSync(candidate).isFile()
+      } catch {
+        return false
       }
-      return true
     })
+    if (!binary) {
+      setProbe('temps', {
+        state: 'unavailable',
+        reason: '未安装 macmon（brew install macmon），macOS 上无其它免 root 的温度接口',
+      })
+      return
+    }
     let child
     try {
-      child = spawn(binary, ['pipe', '-i', String(Math.max(500, cfg.lhmIntervalMs))], {
+      child = spawn(binary, ['pipe', '-i', String(cfg.lhmIntervalMs)], {
         stdio: ['ignore', 'pipe', 'ignore'],
       })
     } catch {
