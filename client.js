@@ -16,8 +16,17 @@ window.__ModuleLoader__.load({
     // Pointer travel (CSS px) below which a press still counts as a click.
     const DRAG_SLOP = 3
 
+    // Fixed hues instead of --dsw-alias-brand-primary: that token is near white
+    // in the dark appearance and near black in the light one, so the collapsed
+    // ring read as an empty black arc on a light desktop. Load semantics still
+    // come from the same three steps; only the base tone is pinned.
+    const TONE_ACCENT = '#0A84FF'
+    const TONE_WARN = '#F5A524'
+    const TONE_DANGER = '#FF453A'
+
     const CSS = `
 .sp-wrap { position: absolute; width: 0; height: 0; pointer-events: none; }
+.sp-wrap, .sp-card, .sp-dot { --sp-accent: ${TONE_ACCENT}; --sp-warn: ${TONE_WARN}; --sp-danger: ${TONE_DANGER}; }
 .sp-card {
   position: absolute; width: ${CARD_W}px; box-sizing: border-box;
   background: color-mix(in srgb, var(--dsw-alias-bg-overlay) 93%, transparent);
@@ -270,9 +279,9 @@ window.__ModuleLoader__.load({
 
     function toneFor(value, warn, danger) {
       if (value == null) return 'var(--dsw-alias-label-tertiary)'
-      if (value >= danger) return 'var(--dsw-alias-state-error-primary)'
-      if (value >= warn) return 'var(--dsw-alias-state-warn-primary)'
-      return 'var(--dsw-alias-brand-primary)'
+      if (value >= danger) return 'var(--sp-danger)'
+      if (value >= warn) return 'var(--sp-warn)'
+      return 'var(--sp-accent)'
     }
 
     function Spark({ points, tone }) {
