@@ -34,7 +34,7 @@
 
 import os from 'node:os'
 import { execFileSync, spawn } from 'node:child_process'
-import { readFileSync, statSync } from 'node:fs'
+import { readdirSync, readFileSync, statSync } from 'node:fs'
 
 const BASE = '/api/system-pulse'
 const MIB = 1024 * 1024
@@ -1077,7 +1077,10 @@ export function apply(ctx, config) {
       }
       return
     }
-    if (!IS_WIN32) return
+    if (!IS_WIN32) {
+      if (IS_LINUX) probeCoresLinux()
+      return
+    }
     coresProbeStarted = true
     let child
     try {
@@ -1114,6 +1117,58 @@ export function apply(ctx, config) {
         coresProbeStarted = false
       }
     })
+  }
+
+  /**
+   * Physical cores on Linux.
+   *
+   * `cpu cores` in /proc/cpuinfo is the x86 spelling and is absent on most
+   * ARM kernels, so it cannot be the only path: a Raspberry Pi would then keep
+   * showing its logical count. The topology tree — /sys/devices/system/cpu/
+   * cpu<N>/topology/core_id — exists on both, and the number of distinct
+   * (package_id, core_id) pairs is the physical core count. Read it first, and
+   * keep `cpu cores` only as the fallback for kernels without sysfs topology.
+   */
+  function probeCoresLinux() {
+    coresProbeStarted = true
+    try {
+      const base = '/sys/devices/system/cpu'
+      const names = readdirSync(base).filter((name) => /^cpu\d+$/.test(name))
+      const seen = new Set()
+      for (const name of names) {
+        try {
+          const core = readFileSync(`${base}/${name}/topology/core_id`, 'utf8').trim()
+          let pkg = '0'
+          try {
+            pkg = readFileSync(`${base}/${name}/topology/physical_package_id`, 'utf8').trim()
+          } catch {
+            /* older kernels omit it; one package is the safe assumption */
+          }
+          seen.add(`${pkg}:${core}`)
+        } catch {
+          /* a hot-unplugged CPU has no topology entry; just skip it */
+        }
+      }
+      if (seen.size > 0 && seen.size <= 2048) {
+        physicalCores = seen.size
+        return
+      }
+    } catch {
+      /* no sysfs topology; fall through to cpuinfo */
+    }
+    try {
+      const text = readFileSync('/proc/cpuinfo', 'utf8')
+      const match = text.match(/^cpu cores\s*:\s*(\d+)/m)
+      const count = Number.parseInt(match?.[1] ?? '', 10)
+      if (Number.isFinite(count) && count > 0 && count <= 2048) {
+        physicalCores = count
+        return
+      }
+    } catch {
+      /* nothing readable; leave the logical count in place */
+    }
+    // Let a later snapshot retry rather than latching a wrong answer.
+    coresProbeStarted = false
   }
 
   function start() {
