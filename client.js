@@ -66,11 +66,47 @@ window.__ModuleLoader__.load({
   background: conic-gradient(var(--sp-ring) calc(var(--sp-deg) * 1%), var(--dsw-alias-border-l1) 0);
 }
 .sp-dot.is-dragging { cursor: grabbing; }
-.sp-dot-in { width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center;
+.sp-dot-in { width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
   background: color-mix(in srgb, var(--dsw-alias-bg-overlay) 96%, transparent);
   border: 1px solid var(--dsw-alias-border-l1);
-  font-size: 11px; font-weight: 600; color: var(--dsw-alias-label-primary); font-variant-numeric: tabular-nums; }
-@media (prefers-reduced-motion: reduce) { .sp-fill { transition: none; } }
+  font-size: 10px; font-weight: 600; color: var(--dsw-alias-label-primary); font-variant-numeric: tabular-nums; }
+.sp-pct { font-size: 8px; font-weight: 500; opacity: .72; margin-left: 1px; }
+.sp-roll { display: inline-flex; flex-direction: column; height: 9px; overflow: hidden; font-variant-numeric: tabular-nums; position: relative; }
+.sp-roll > span { display: block; height: 9px; line-height: 9px; text-align: center; }
+.sp-roll.is-rolling > span { position: absolute; left: 0; width: 100%; }
+.sp-roll.is-rolling > span:last-child { top: 9px; }
+.sp-roll.is-rolling { animation: sp-roll 5.2s steps(1, end) infinite; }
+@keyframes sp-roll {
+  0%, 40% { }
+  41% { translate: 0 -9px; }
+  92% { translate: 0 -9px; }
+  93%, 100% { translate: 0 0; }
+}
+.sp-hint {
+  position: absolute; left: calc(100% + 8px); top: 50%; transform: translateY(-50%) translateX(-3px);
+  max-width: 0; opacity: 0; overflow: hidden; white-space: nowrap; pointer-events: none;
+  display: flex; flex-wrap: wrap; align-items: baseline; row-gap: 2px; max-height: 0;
+  padding: 5px 0; border-radius: 8px; box-sizing: border-box;
+  background: color-mix(in srgb, var(--dsw-alias-bg-overlay) 93%, transparent);
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  border: 1px solid transparent; color: var(--dsw-alias-label-primary);
+  font-size: 11px; line-height: 1.3; font-variant-numeric: tabular-nums;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, .22);
+  transition: max-width .18s ease, max-height .18s ease, opacity .18s ease, transform .18s ease, padding .18s ease, border-color .18s ease;
+}
+.sp-dot:hover .sp-hint, .sp-dot.is-dragging .sp-hint, .sp-hint.is-open {
+  max-width: 420px; max-height: 300px; opacity: 1; transform: translateY(-50%); padding: 5px 9px; border-color: var(--dsw-alias-border-l1);
+}
+.sp-hint-k { color: var(--dsw-alias-label-tertiary); font-size: 10px; margin-right: 4px; }
+.sp-hint-v { font-weight: 600; margin-right: 8px; }
+.sp-hint-more { flex-basis: 100%; color: var(--dsw-alias-label-tertiary); font-size: 10px; }
+/* Near the right edge the bubble has to grow to the left instead. */
+.sp-hint.is-left { left: auto; right: calc(100% + 8px); transform: translateY(-50%) translateX(3px); }
+/* Side by side the bubble would eat the whole screen edge, so a ring near the
+   right edge gets a narrow one that stacks its rows instead. */
+.sp-hint.is-left.is-open, .sp-dot:hover .sp-hint.is-left { max-width: 178px; }
+.sp-dot:hover .sp-hint.is-left, .sp-hint.is-left.is-open { transform: translateY(-50%); }
+@media (prefers-reduced-motion: reduce) { .sp-fill { transition: none; } .sp-roll.is-rolling { animation: none; } .sp-hint { transition: none; } }
 `
 
     const EN = {
@@ -89,6 +125,8 @@ window.__ModuleLoader__.load({
       up: 'up',
       vram: 'VRAM',
       shared: 'unified memory',
+      ringHint: 'CPU load',
+      more: '…click to expand',
     }
     const ZH = {
       title: '系统脉搏',
@@ -106,6 +144,8 @@ window.__ModuleLoader__.load({
       up: '运行',
       vram: '显存',
       shared: '统一内存',
+      ringHint: '处理器占用',
+      more: '…点击展开',
     }
 
     function loadPos() {
@@ -437,6 +477,18 @@ window.__ModuleLoader__.load({
           const ghostText = (probe) => (pending(probe) ? t('sampling') : probe?.reason ?? t('unavailable'))
 
           if (collapsed) {
+            const ringValue = pct(cpu?.usage)
+            const hintLeft = (pos.x - origin.x) + 48 + 12 > window.innerWidth
+            // A probe without a reading still gets a row: on this machine it
+            // may simply be unavailable, and hiding the row would leave the
+            // hover hint silently short of an answer.
+            const hintRow = (label, value) =>
+              h(
+                'span',
+                { key: label },
+                h('span', { className: 'sp-hint-k' }, label),
+                h('span', { className: 'sp-hint-v' }, value ?? '—'),
+              )
             return h(
               'div',
               { className: 'sp-wrap', ref: wrapRef },
@@ -452,11 +504,37 @@ window.__ModuleLoader__.load({
                     '--sp-ring': cpuTone,
                     '--sp-deg': cpuMark / 3.6,
                   },
-                  title: `${t('title')} · ${pct(cpu?.usage)}`,
+                  title: `${t('title')} · ${t('ringHint')} ${ringValue} · ${t('expand')}`,
+                  'aria-label': `${t('title')} · ${t('ringHint')} ${ringValue}`,
                   onClick: toggle,
                   onClickCapture: swallowClickAfterDrag,
                 },
-                h('div', { className: 'sp-dot-in' }, cpu ? `${Math.round(cpu.usage * 100)}` : '—'),
+                // One character at a time fits inside the ring: the number and
+                // its tens digit alternate, and the ring itself carries the
+                // rest of the scale.
+                h(
+                  'div',
+                  { className: 'sp-dot-in' },
+                  cpu
+                    ? h(
+                        'span',
+                        { className: 'sp-roll' + (cpu.usage >= 0.1 ? ' is-rolling' : '') },
+                        h('span', null, `${Math.round(cpu.usage * 100)}`),
+                        h('span', null, `${Math.round(cpu.usage * 10)}`),
+                      )
+                    : '—',
+                  h('span', { className: 'sp-pct' }, '%'),
+                ),
+                h(
+                  'div',
+                  { className: `sp-hint${hintLeft ? ' is-left' : ''}`, 'aria-hidden': 'true' },
+                  h('span', { className: 'sp-hint-k' }, t('ringHint')),
+                  h('span', { className: 'sp-hint-v' }, ringValue),
+                  hintRow(t('gpu'), gpu ? pct(gpu.usage) : ghostText(health?.gpu)),
+                  hintRow(t('mem'), mem ? pct(mem.usage) : ghostText(health?.mem)),
+                  hintRow(t('net'), net ? `↓ ${rate(net.rxBps)} ↑ ${rate(net.txBps)}` : ghostText(health?.net)),
+                  h('span', { className: 'sp-hint-more' }, t('more')),
+                ),
               ),
             )
           }
