@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-system-pulse",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Floating HUD for the DSH web GUI: live CPU (per-core + 60 s trend), GPU, memory, network and, where the OS allows it, CPU package temperature/power/fan. Runs on Windows, macOS and Linux.",
   "type": "module",
   "license": "MIT",

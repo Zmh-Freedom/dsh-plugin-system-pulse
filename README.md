@@ -42,7 +42,7 @@ plugin_manager  install_bundle  target = git+https://github.com/Zmh-Freedom/dsh-
 想固定在某个版本上，加上 tag（下面沿用 `plugin_manager` 的 `<包名>@<版本>` 写法）：
 
 ```text
-plugin_manager  install_bundle  target = dsh-plugin-system-pulse@0.2.0
+plugin_manager  install_bundle  target = dsh-plugin-system-pulse@0.2.1
 ```
 
 > 也可以写成 `git+https://github.com/Zmh-Freedom/dsh-plugin-system-pulse.git#<tag>`，前提是仓库里确实打了这个 tag。
