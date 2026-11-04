@@ -64,16 +64,27 @@ window.__ModuleLoader__.load({
 .sp-dot {
   position: absolute; width: 46px; height: 46px; border-radius: 50%;
   pointer-events: auto; cursor: grab; display: grid; place-items: center;
-  background: conic-gradient(var(--sp-ring) calc(var(--sp-deg) * 1%), var(--dsw-alias-border-l1) 0);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, .26);
+  /* The track is opaque on purpose: --dsw-alias-border-l1 is a 10% white
+     wash, invisible over a dark wallpaper, which left the ring looking like a
+     half-drawn arc. The filled arc keeps the accent colour, the track is the
+     same overlay tint the dial uses, mixed solid. */
+  background: conic-gradient(
+    var(--sp-ring) calc(var(--sp-deg) * 1%),
+    color-mix(in srgb, var(--dsw-alias-label-primary) 16%, var(--dsw-alias-bg-overlay)) 0
+  );
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .26), inset 0 0 0 1px var(--dsw-alias-border-l1);
 }
 .sp-dot.is-dragging { cursor: grabbing; }
 .sp-dot-in {
   width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
   gap: 1px; pointer-events: none;
-  background: color-mix(in srgb, var(--dsw-alias-bg-overlay) 93%, transparent);
+  /* Deliberately translucent, like the expanded card: the ring has to read as
+     a piece of the same glass, not a solid button. The hairline and the inner
+     shadow are what keep the number legible over a bright wallpaper. */
+  background: color-mix(in srgb, var(--dsw-alias-bg-overlay) 78%, transparent);
   -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
   border: 1px solid var(--dsw-alias-border-l1);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .18);
   color: var(--dsw-alias-label-primary);
   font-size: 11px; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums;
 }
