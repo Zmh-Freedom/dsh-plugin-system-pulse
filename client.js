@@ -72,7 +72,12 @@ window.__ModuleLoader__.load({
   position: absolute; left: 0; top: 0;
   width: 46px; height: 46px; aspect-ratio: 1 / 1;
   pointer-events: none; overflow: hidden;
-  border-radius: 9999px;
+  /* clip-path, not border-radius: WebKit on macOS 26 draws a small box with a
+     corner radius as a superellipse, so a 46 px element came out as a squircle
+     no matter what radius was asked for. A circle clip is not rounded at all,
+     which leaves the shape nothing to reinterpret. */
+  clip-path: circle(50% at 50% 50%);
+  -webkit-clip-path: circle(50% at 50% 50%);
   /* Belt and braces: some WebKit builds paint a small box with a percentage
      radius as a squircle, so the arc is clipped by an explicit circle mask as
      well. The mask is what actually makes it a ring. */
@@ -94,21 +99,32 @@ window.__ModuleLoader__.load({
   box-shadow: 0 10px 30px rgba(0, 0, 0, .26); pointer-events: none;
 }
 .sp-dot.is-dragging { cursor: grabbing; }
+/* The dial's circle comes from a clip, not from a corner radius: WebKit on
+   macOS 26 paints a small box with a border-radius as a superellipse, and a
+   34 px disc is squarely in the range where that shows. The hairline is an
+   outline drawn on a child-free pseudo-element, because clip-path would cut
+   away a real border. */
 .sp-dot-in {
   position: relative; z-index: 1;
   width: 34px; height: 34px; aspect-ratio: 1 / 1; flex: none;
-  border-radius: 9999px; overflow: hidden;
   display: flex; align-items: center; justify-content: center;
   gap: 1px; pointer-events: none;
   /* Deliberately translucent, like the expanded card: the ring has to read as
-     a piece of the same glass, not a solid button. The hairline and the inner
-     shadow are what keep the number legible over a bright wallpaper. */
+     a piece of the same glass, not a solid button. */
   background: color-mix(in srgb, var(--dsw-alias-bg-overlay) 78%, transparent);
   -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
-  border: 1px solid var(--dsw-alias-border-l1);
+  clip-path: circle(50% at 50% 50%);
+  -webkit-clip-path: circle(50% at 50% 50%);
   box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .18);
   color: var(--dsw-alias-label-primary);
   font-size: 11px; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums;
+}
+/* The rim: a border cannot survive the clip above, so it is painted by an
+   inner ring drawn with a radial gradient instead. */
+.sp-dot-in::after {
+  content: ''; position: absolute; inset: 0; border-radius: 50%;
+  background: radial-gradient(circle closest-side, transparent calc(100% - 1.5px), var(--dsw-alias-border-l1) 0);
+  pointer-events: none;
 }
 .sp-pct { font-size: 8px; font-weight: 500; color: var(--dsw-alias-label-tertiary); }
 /* Reading a hovering viewer, not a rolling animation: the full number is
