@@ -677,18 +677,24 @@ window.__ModuleLoader__.load({
               : cpu.cores
                 ? `${cpu.cores}C/${cpu.threads}T`
                 : `${cpu.threads}T`
+          // Say what is missing and who can supply it, per platform: macOS has
+          // no root-free clock API but macmon measures it, Windows needs the
+          // PowerShell relay, and Linux has no live clock source at all.
           const cpuClockNote = !cpu
             ? ''
             : cpu.clockMHz
               ? `实时 ${(cpu.clockMHz / 1000).toFixed(2)} GHz · 标称 ${(cpu.speedMHz / 1000).toFixed(1)} GHz`
               : platform === 'darwin'
-                ? `标称 ${(cpu.speedMHz / 1000).toFixed(1)} GHz（Apple Silicon 不向非特权进程提供实时频率）`
-                : `标称 ${(cpu.speedMHz / 1000).toFixed(1)} GHz（实时频率需要系统性能计数器）`
+                ? `标称 ${(cpu.speedMHz / 1000).toFixed(1)} GHz（安装 macmon 可显示实时频率）`
+                : platform === 'win32'
+                  ? `标称 ${(cpu.speedMHz / 1000).toFixed(1)} GHz（实时频率需要系统性能计数器）`
+                  : `标称 ${(cpu.speedMHz / 1000).toFixed(1)} GHz（该平台暂无实时频率来源）`
 
           const cpuMeta = cpu
             ? {
-                // Thermal readings take the slot when LibreHardwareMonitor is
-                // reachable; otherwise fall back to the structure and clock.
+                // Thermal readings take the slot once a sensor source is
+                // reporting (LHM on Windows, macmon on macOS); otherwise fall
+                // back to the core layout and clock.
                 text: cpuThermal.length
                   ? cpuThermal.join(' · ')
                   : `${cpuShape} · ${((cpu.clockMHz ?? cpu.speedMHz) / 1000).toFixed(2)}G`,

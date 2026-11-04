@@ -21,7 +21,7 @@
 
 | 行 | 内容 | 数据来源 |
 |---|---|---|
-| 处理器 | 总占用、逐核占用、60 秒趋势、封装温度、封装功耗、风扇 | `os.cpus()` 差分；温度用 LibreHardwareMonitor，macOS 不提供 |
+| 处理器 | 总占用、逐核占用、60 秒趋势、实时频率、封装温度、封装功耗、风扇 | `os.cpus()` 差分；温度 Windows 用 LibreHardwareMonitor、macOS 用 macmon |
 | 显卡 | 利用率、显存/统一内存、温度、功耗、频率 | `nvidia-smi`；macOS 走 `ioreg -c IOAccelerator` |
 | 内存 | 已用/总量、占用率、交换空间 | `os.totalmem`；macOS 走 `vm_stat` + `sysctl vm.swapusage` |
 | 网络 | 上下行实时速率 | Windows `Get-Counter`；macOS `netstat -ibn`；Linux `/proc/net/dev` |
@@ -91,7 +91,7 @@ Windows 没有向用户态暴露 CPU 温度的接口（WMI 温区、PDH 温区�
 2. 打开 `Options → Remote Web Server`（默认端口 8085）；
 3. 插件会在 30 秒内自动接上，无需重启。
 
-不装也能用：卡片照常显示占用、频率、内存、显卡与网络，只是温度/功耗/风扇显示 `—`，悬停会说明原因。
+不装也能用：卡片照常显示占用、频率、内存、显卡与网络，只是温度/功耗/风扇显示 `—`，悬停会说明原因。macOS 上同样如此——装 `macmon` 才会有温度。
 
 ## 平台支持
 
@@ -100,7 +100,7 @@ Windows 没有向用户态暴露 CPU 温度的接口（WMI 温区、PDH 温区�
 | CPU / 内存 | ✅ | ✅ | ✅ |
 | 网络速率 | ✅ | ✅（`/proc/net/dev`） | ✅（`netstat -ibn`） |
 | GPU | ✅ NVIDIA（或 LHM） | ✅ NVIDIA | ✅ Apple Silicon / Intel 核显（`ioreg`） |
-| CPU 温度 / 风扇 / 功耗 | ✅ 需 LHM | — | —（需 root 的 powermetrics / SMC） |
+| CPU 温度 / 风扇 / 功耗 | ✅ 需 LHM | — | ✅ 需 macmon |
 | 换页 / 交换空间 | — | — | ✅ |
 
 ### macOS
@@ -108,7 +108,7 @@ Windows 没有向用户态暴露 CPU 温度的接口（WMI 温区、PDH 温区�
 - **内存口径**：`os.freemem()` 在 macOS 上只统计 free pages，会把一台健康机器的占用显示成 99%。插件改用 `vm_stat`，按活动监视器的算法计算：`已用 =（匿名页 − 可清除页 + 联动页 + 压缩页）× 页大小`，同时用 `sysctl vm.swapusage` 读出交换空间。
 - **GPU**：Apple Silicon 没有 `nvidia-smi`，统一内存也没有独立的显存池，因此改为轮询 `ioreg -c IOAccelerator`，取 `Device Utilization %` 作为利用率、`In use system memory` 作为 GPU 工作集，`GPU 核心数` 从 `gpu-core-count` 读出。
 - **核心结构**：`hw.perflevel0/1.physicalcpu` 给出性能核与能效核数量，卡片显示成 `4P+6E` 而不是容易误解的 `10C/10T`。
-- **温度/风扇/功耗**：macOS 只对 root 开放这些传感器（`powermetrics` 与 SMC），非特权进程拿不到任何可靠读数，所以这三项显示 `—` 并说明原因，不会猜测数值。
+- **温度/风扇/功耗**：`powermetrics` 要求 root，Intel 时代的 `osx-cpu-temp` 在 Apple Silicon 上只返回 `0.0°C`。插件改为调用 [macmon](https://github.com/vladkens/macmon)，它通过 IOHIDEventSystem 读取传感器，**不需要 root**，同时给出 CPU/GPU 温度、CPU 簇功耗与 P 核实测频率。未安装时这三项显示 `—`，悬停提示 `brew install macmon`。
 
 ## 已知限制
 
