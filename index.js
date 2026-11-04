@@ -473,7 +473,13 @@ export function apply(ctx, config) {
     }
     const elapsed = (now - state.prevNetAt) / 1000
     if (elapsed <= 0) return
-    const current = readProcNetDev()
+    let current
+    try {
+      current = readProcNetDev()
+    } catch (error) {
+      setProbe('net', { state: 'unavailable', reason: `无法读取 /proc/net/dev：${error?.message ?? error}` })
+      return
+    }
     state.net = {
       rxBps: Math.max(0, (current.rx - state.prevNetDev.rx) / elapsed),
       txBps: Math.max(0, (current.tx - state.prevNetDev.tx) / elapsed),
@@ -481,6 +487,9 @@ export function apply(ctx, config) {
     state.netAt = now
     state.prevNetDev = current
     state.prevNetAt = now
+    // Without this the probe stays at "sampling" even though rates are live,
+    // because nothing else ever reports a successful Linux read.
+    setProbe('net', { state: 'ok', reason: null })
   }
 
   function readProcNetDev() {
@@ -1012,7 +1021,9 @@ export function apply(ctx, config) {
             touch()
             const now = Date.now()
             if (action === 'snapshot') {
-              if (IS_LINUX && state.net == null) sampleNetProc(now)
+              // Throttled per call, not gated on state.net: gating there froze
+              // the rate after the very first successful sample.
+              if (IS_LINUX) sampleNetProc(now)
               if (IS_DARWIN) sampleNetDarwin(now)
             }
             if (!state.snapshot || now - state.lastSampleAt >= cfg.intervalMs) sample()
