@@ -253,8 +253,34 @@ function parseAccelerator(text) {
 
 export const inject = ['webServer']
 
+/**
+ * Clamp every numeric knob into a range the loops can survive. A negative
+ * historySize makes the trim loop remove nothing while its condition stays
+ * true, and a zero interval turns setInterval into a busy poll of the host.
+ */
+function normalizeConfig(input) {
+  const raw = input && typeof input === 'object' ? input : {}
+  const cfg = { ...DEFAULTS, ...raw }
+  const whole = (value, fallback, min, max) => {
+    const number = Number(value)
+    if (!Number.isFinite(number)) return fallback
+    return Math.min(max, Math.max(min, Math.round(number)))
+  }
+  cfg.intervalMs = whole(cfg.intervalMs, DEFAULTS.intervalMs, 250, 60000)
+  cfg.gpuIntervalMs = whole(cfg.gpuIntervalMs, DEFAULTS.gpuIntervalMs, 500, 60000)
+  cfg.netIntervalMs = whole(cfg.netIntervalMs, DEFAULTS.netIntervalMs, 1000, 60000)
+  cfg.lhmIntervalMs = whole(cfg.lhmIntervalMs, DEFAULTS.lhmIntervalMs, 1000, 300000)
+  cfg.idleStopMs = whole(cfg.idleStopMs, DEFAULTS.idleStopMs, 5000, 3600000)
+  cfg.historySize = whole(cfg.historySize, DEFAULTS.historySize, 1, 3600)
+  cfg.gpuStaleMs = whole(cfg.gpuStaleMs, DEFAULTS.gpuStaleMs, 1000, 600000)
+  cfg.netStaleMs = whole(cfg.netStaleMs, DEFAULTS.netStaleMs, 1000, 600000)
+  cfg.tempsStaleMs = whole(cfg.tempsStaleMs, DEFAULTS.tempsStaleMs, 1000, 600000)
+  cfg.lhmUrl = typeof cfg.lhmUrl === 'string' && cfg.lhmUrl.trim() ? cfg.lhmUrl : DEFAULTS.lhmUrl
+  return cfg
+}
+
 export function apply(ctx, config) {
-  const cfg = { ...DEFAULTS, ...(config && typeof config === 'object' ? config : {}) }
+  const cfg = normalizeConfig(config)
   let origin = ''
   try {
     origin = ctx.webServer.getOrigin()
