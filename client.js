@@ -66,25 +66,35 @@ window.__ModuleLoader__.load({
   background: conic-gradient(var(--sp-ring) calc(var(--sp-deg) * 1%), var(--dsw-alias-border-l1) 0);
 }
 .sp-dot.is-dragging { cursor: grabbing; }
-.sp-dot-in { width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+/* A 3:2 pill, not a circle: a circle inside a 48 px ring leaves ~5 px per
+   side, which a two-digit percentage cannot use. */
+.sp-dot-in { width: 42px; height: 28px; border-radius: 999px; display: flex; align-items: center; justify-content: center;
   background: color-mix(in srgb, var(--dsw-alias-bg-overlay) 96%, transparent);
   border: 1px solid var(--dsw-alias-border-l1);
-  font-size: 10px; font-weight: 600; color: var(--dsw-alias-label-primary); font-variant-numeric: tabular-nums; }
+  font-size: 12px; font-weight: 600; color: var(--dsw-alias-label-primary); font-variant-numeric: tabular-nums;
+  pointer-events: none; }
 .sp-pct { font-size: 8px; font-weight: 500; opacity: .72; margin-left: 1px; }
-.sp-roll { display: inline-flex; flex-direction: column; height: 9px; overflow: hidden; font-variant-numeric: tabular-nums; position: relative; }
-.sp-roll > span { display: block; height: 9px; line-height: 9px; text-align: center; }
-.sp-roll.is-rolling > span { position: absolute; left: 0; width: 100%; }
-.sp-roll.is-rolling > span:last-child { top: 9px; }
-.sp-roll.is-rolling { animation: sp-roll 5.2s steps(1, end) infinite; }
+/* Neither the dot nor the pill can be a transform container: a translate on
+   an ancestor becomes the containing block of fixed positioning, and the
+   bubble — which hangs outside the 48 px hit area — is clipped. The number
+   text does the rolling instead. */
+.sp-roll { font-variant-numeric: tabular-nums; }
+.sp-roll-text { position: relative; display: inline-block; }
+.sp-roll-face { display: inline-block; transition: opacity .3s ease; }
+.sp-roll-face.is-masked { position: absolute; inset: 0; opacity: 0; }
+.sp-hint.is-open .sp-roll-face { opacity: 0; }
+.sp-hint.is-open .sp-roll-face.is-masked { opacity: 1; }
 @keyframes sp-roll {
-  0%, 40% { }
-  41% { translate: 0 -9px; }
-  92% { translate: 0 -9px; }
+  0%, 40% { translate: 0 0; }
+  41%, 92% { translate: 0 -9px; }
   93%, 100% { translate: 0 0; }
 }
+/* Hidden via visibility rather than a zero width: the bubble hangs outside the
+   48 px hit area, so anything that clips to the dot's box would eat it. The
+   unrolling is done by animating max-width only while it is visible. */
 .sp-hint {
   position: absolute; left: calc(100% + 8px); top: 50%; transform: translateY(-50%) translateX(-3px);
-  max-width: 0; opacity: 0; overflow: hidden; white-space: nowrap; pointer-events: none;
+  visibility: hidden; max-width: 0; opacity: 0; overflow: hidden; white-space: nowrap;
   display: flex; flex-wrap: wrap; align-items: baseline; row-gap: 2px; max-height: 0;
   padding: 5px 0; border-radius: 8px; box-sizing: border-box;
   background: color-mix(in srgb, var(--dsw-alias-bg-overlay) 93%, transparent);
@@ -95,8 +105,10 @@ window.__ModuleLoader__.load({
   transition: max-width .18s ease, max-height .18s ease, opacity .18s ease, transform .18s ease, padding .18s ease, border-color .18s ease;
 }
 .sp-dot:hover .sp-hint, .sp-dot.is-dragging .sp-hint, .sp-hint.is-open {
-  max-width: 420px; max-height: 300px; opacity: 1; transform: translateY(-50%); padding: 5px 9px; border-color: var(--dsw-alias-border-l1);
+  visibility: visible; max-height: 300px; opacity: 1; transform: translateY(-50%); padding: 5px 9px; border-color: var(--dsw-alias-border-l1);
+  max-width: 420px;
 }
+.sp-hint > * { pointer-events: none; }
 .sp-hint-k { color: var(--dsw-alias-label-tertiary); font-size: 10px; margin-right: 4px; }
 .sp-hint-v { font-weight: 600; margin-right: 8px; }
 /* Near the right edge the bubble has to grow to the left instead. */
@@ -519,9 +531,15 @@ window.__ModuleLoader__.load({
                   cpu
                     ? h(
                         'span',
-                        { className: 'sp-roll' + (cpu.usage >= 0.1 ? ' is-rolling' : '') },
-                        h('span', null, `${Math.round(cpu.usage * 100)}`),
-                        h('span', null, `${Math.round(cpu.usage * 10)}`),
+                        { className: 'sp-roll' },
+                        h(
+                          'span',
+                          { className: 'sp-roll-text' },
+                          h('span', { className: 'sp-roll-face' }, `${Math.round(cpu.usage * 100)}`),
+                          // Same node count: PowerPoint-style, the tens digit is
+                          // what stays readable while the bubble is open.
+                          h('span', { className: 'sp-roll-face is-masked' }, `${Math.round(cpu.usage * 10)}`),
+                        ),
                       )
                     : '—',
                   h('span', { className: 'sp-pct' }, '%'),
