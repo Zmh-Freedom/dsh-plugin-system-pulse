@@ -62,7 +62,7 @@ window.__ModuleLoader__.load({
 /* Collapsed: a ring sized to travel, drawn with the card's own materials so
    the two states read as one object. */
 .sp-dot {
-  position: absolute; width: 46px; height: 46px; border-radius: 50%;
+  position: absolute; width: 46px; height: 46px;
   pointer-events: auto; cursor: grab; display: grid; place-items: center;
   /* The track is opaque on purpose: --dsw-alias-border-l1 is a 10% white
      wash, invisible over a dark wallpaper, which left the ring looking like a
@@ -72,11 +72,15 @@ window.__ModuleLoader__.load({
     var(--sp-ring) calc(var(--sp-deg) * 1%),
     color-mix(in srgb, var(--dsw-alias-label-primary) 16%, var(--dsw-alias-bg-overlay)) 0
   );
+  /* Squircle, not a circle: 50% on a 46 px box still reads as a rounded
+     square once the track is opaque all the way round, so the curvature is
+     lifted to the continuous-corner shape macOS uses for its own inset rings. */
+  border-radius: 38%;
   box-shadow: 0 10px 30px rgba(0, 0, 0, .26), inset 0 0 0 1px var(--dsw-alias-border-l1);
 }
 .sp-dot.is-dragging { cursor: grabbing; }
 .sp-dot-in {
-  width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; border-radius: 38%; display: flex; align-items: center; justify-content: center;
   gap: 1px; pointer-events: none;
   /* Deliberately translucent, like the expanded card: the ring has to read as
      a piece of the same glass, not a solid button. The hairline and the inner
