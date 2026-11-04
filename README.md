@@ -75,7 +75,7 @@ plugin_manager  install_bundle  target = /path/to/dsh-plugin-system-pulse
 | `intervalMs` | `1000` | 客户端轮询间隔（毫秒） |
 | `gpuIntervalMs` | `2000` | `nvidia-smi` 采样间隔 |
 | `netIntervalMs` | `3000` | 网络计数器采样间隔 |
-| `lhmIntervalMs` | `3000` | 温度探测间隔（Windows） |
+| `lhmIntervalMs` | `3000` | 温度探测间隔（Windows 轮询 LibreHardwareMonitor、macOS 的 `macmon` 启动参数，键名为历史遗留） |
 | `idleStopMs` | `20000` | 无请求多久后停掉采样与子进程 |
 | `historySize` | `180` | 服务端保留的历史点数 |
 | `lhmUrl` | `http://localhost:8085/data.json` | LibreHardwareMonitor 的 Web Server 地址 |
