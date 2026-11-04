@@ -265,6 +265,15 @@ window.__ModuleLoader__.load({
       return (bytes / 1024 ** 3).toFixed(1)
     }
 
+    /**
+     * Watts below 1 W are ordinary on an Apple Silicon GPU and would round to a
+     * meaningless "0W"; keep one decimal there and integers above.
+     */
+    function watts(value) {
+      if (value == null || !Number.isFinite(value)) return null
+      return value < 1 ? `${value.toFixed(1)}W` : `${Math.round(value)}W`
+    }
+
     function uptime(ms, t) {
       if (ms == null) return ''
       const totalMinutes = Math.floor(ms / 60000)
@@ -653,7 +662,7 @@ window.__ModuleLoader__.load({
           const cpuThermal = temps
             ? [
                 temps.cpuC != null ? `${Math.round(temps.cpuC)}°C` : null,
-                temps.cpuPowerW != null ? `${Math.round(temps.cpuPowerW)}W` : null,
+                temps.cpuPowerW != null ? watts(temps.cpuPowerW) : null,
                 temps.fanRpm != null && temps.fanRpm > 0 ? `${Math.round(temps.fanRpm)} rpm` : null,
               ].filter(Boolean)
             : []
@@ -694,7 +703,7 @@ window.__ModuleLoader__.load({
                   temps
                     ? [
                         temps.cpuC != null ? `封装温度 ${Math.round(temps.cpuC)}°C（Core Tctl/Tdie）` : null,
-                        temps.cpuPowerW != null ? `封装功耗 ${Math.round(temps.cpuPowerW)}W（Package）` : null,
+                        temps.cpuPowerW != null ? `封装功耗 ${watts(temps.cpuPowerW)}（Package）` : null,
                         temps.fanRpm != null ? `主板风扇 ${Math.round(temps.fanRpm)} RPM（SuperIO）` : null,
                         `温度来源：${temps.source ?? 'LibreHardwareMonitor'}`,
                       ]
@@ -707,11 +716,12 @@ window.__ModuleLoader__.load({
 
           const gpuMeta = gpu
             ? {
-                // NVIDIA cards expose temperature and power; the macOS probe
-                // has neither, so the slot shows the unified-memory working set.
+                // Temperature and power come from the sensor process (NVIDIA on
+                // Windows/Linux, macmon on macOS). When both are missing the slot
+                // falls back to the unified-memory working set.
                 text: [
                   gpu.tempC != null ? `${Math.round(gpu.tempC)}°C` : null,
-                  gpu.powerW != null ? `${Math.round(gpu.powerW)}W` : null,
+                  gpu.powerW != null ? watts(gpu.powerW) : null,
                 ].filter(Boolean).join(' · ') ||
                   (gpu.memUsed != null
                     ? gpu.memTotal != null

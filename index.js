@@ -34,7 +34,7 @@
 
 import os from 'node:os'
 import { execFileSync, spawn } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { readFileSync, statSync } from 'node:fs'
 
 const BASE = '/api/system-pulse'
 const MIB = 1024 * 1024
@@ -84,6 +84,21 @@ const DARWIN_TOOLS = {
   sysctl: '/usr/sbin/sysctl',
   vmStat: '/usr/bin/vm_stat',
 }
+
+/**
+ * macmon reads the Apple Silicon temperature and power sensors through
+ * IOHIDEventSystem, which — unlike SMC and powermetrics — needs no root. It
+ * streams one JSON object per line, so it is polled as a child process.
+ *
+ * Not in /usr/bin, and a GUI app inherits almost no PATH: look in the two
+ * placeholders Homebrew uses, then fall back to a bare name so a user who
+ * installed it some other way still gets it picked up.
+ */
+const DARWIN_MACMON_CANDIDATES = [
+  '/opt/homebrew/bin/macmon',
+  '/usr/local/bin/macmon',
+  'macmon',
+]
 
 /** Same idea for the BSD interface names netstat reports on macOS. */
 const DARWIN_IFACE_SKIP =
@@ -254,7 +269,46 @@ function parseAccelerator(text) {
 export const inject = ['webServer']
 
 /**
- * Clamp every numeric knob into a range the loops can survive. A negative
+ * One `macmon pipe` line holds the whole machine snapshot. Only the pieces
+ * the HUD has slots for are taken: CPU/GPU temperature, package power, fan
+ * count. Everything else (per-core MHz, tier ratios) is already covered by
+ * os.cpus() and the ioreg probe.
+ */
+function parseMacmon(line) {
+  let payload
+  try {
+    payload = JSON.parse(line)
+  } catch {
+    return null
+  }
+  if (!payload || typeof payload !== 'object') return null
+  const temp = payload.temp && typeof payload.temp === 'object' ? payload.temp : null
+  const cpuC = Number.isFinite(temp?.cpu_temp_avg) ? temp.cpu_temp_avg : null
+  const gpuC = Number.isFinite(temp?.gpu_temp_avg) ? temp.gpu_temp_avg : null
+  const cpuPowerW = Number.isFinite(payload.cpu_power) ? payload.cpu_power : null
+  const sysPowerW = Number.isFinite(payload.sys_power) ? payload.sys_power : null
+  const gpuPowerW = Number.isFinite(payload.gpu_power) ? payload.gpu_power : null
+  const clockMHz = Number.isFinite(payload.pcpu_freq_mhz) ? Math.round(payload.pcpu_freq_mhz) : null
+  const fans = Array.isArray(payload.fans) ? payload.fans : []
+  const fanValues = fans
+    .map((fan) => (typeof fan === 'number' ? fan : fan?.rpm ?? fan?.speed ?? null))
+    .filter((value) => Number.isFinite(value))
+  if (cpuC == null && gpuC == null && cpuPowerW == null) return null
+  return {
+    cpuC,
+    gpuC,
+    // "Package power" on a Windows box is the CPU wattage; the closest
+    // equivalent here is the CPU cluster figure, not the whole SoC.
+    cpuPowerW,
+    sysPowerW,
+    gpuPowerW,
+    clockMHz,
+    fanRpm: fanValues.length ? Math.max(...fanValues) : fans.length ? 0 : null,
+    source: 'macmon',
+  }
+}
+
+/** Clamp every numeric knob into a range the loops can survive. A negative
  * historySize makes the trim loop remove nothing while its condition stays
  * true, and a zero interval turns setInterval into a busy poll of the host.
  */
@@ -319,6 +373,12 @@ export function apply(ctx, config) {
     swapAt: 0,
     /** `% Processor Performance` from the network relay, relative to nominal. */
     perfPct: null,
+    /**
+     * Current P-core clock in MHz straight from the sensor, when there is one.
+     * macOS has no percentage-of-nominal reading, but macmon measures the
+     * frequency itself, which is the number the row wants anyway.
+     */
+    measuredClockMHz: null,
   }
 
   /** Physical core count; `os.cpus()` only reports logical processors. */
@@ -334,6 +394,7 @@ export function apply(ctx, config) {
   let gpuTimer = null
   let netChild = null
   let lhmTimer = null
+  let macmonChild = null
   let lhmBackoffUntil = 0
 
   function setProbe(name, next) {
@@ -613,13 +674,25 @@ export function apply(ctx, config) {
         perfCores: coreSplit?.perf ?? null,
         effCores: coreSplit?.eff ?? null,
         speedMHz: cpu.speedMHz,
+        // macOS reports no percentage-of-nominal, but macmon measures the P-core
+        // clock directly, which is what the row wants to show.
         clockMHz:
-          state.perfPct != null && nominalMHz > 0
+          state.measuredClockMHz ??
+          (state.perfPct != null && nominalMHz > 0
             ? Math.round((nominalMHz * state.perfPct) / 100)
-            : null,
+            : null),
       },
       mem,
-      gpu: gpu.value,
+      // Temperatures and power come from the sensor process, not from the GPU
+      // probe: the GPU row shows the same figures the CPU row does.
+      gpu:
+        gpu.value && temps.value
+          ? {
+              ...gpu.value,
+              tempC: gpu.value.tempC ?? temps.value.gpuC ?? null,
+              powerW: gpu.value.powerW ?? temps.value.gpuPowerW ?? null,
+            }
+          : gpu.value,
       net: net.value,
       temps: temps.value,
       health: { gpu: gpu.health, net: net.health, mem: state.probes.mem, temps: temps.health },
@@ -808,6 +881,75 @@ export function apply(ctx, config) {
     setProbe('net', { state: 'ok', reason: null })
   }
 
+  /**
+   * macOS temperature, fan and package power.
+   *
+   * SMC and powermetrics both demand root, so for a long time these fields
+   * were reported unavailable on macOS. macmon reads the same sensors through
+   * IOHIDEventSystem as an ordinary user; when it is installed the HUD gets
+   * real readings, and when it is not the probe explains what to install
+   * rather than claiming the platform cannot do it.
+   */
+  function startTempsDarwin() {
+    if (macmonChild) return
+    const binary = DARWIN_MACMON_CANDIDATES.find((candidate) => {
+      if (candidate.includes('/')) {
+        try {
+          return statSync(candidate).isFile()
+        } catch {
+          return false
+        }
+      }
+      return true
+    })
+    let child
+    try {
+      child = spawn(binary, ['pipe', '-i', String(Math.max(500, cfg.lhmIntervalMs))], {
+        stdio: ['ignore', 'pipe', 'ignore'],
+      })
+    } catch {
+      setProbe('temps', {
+        state: 'unavailable',
+        reason: '未安装 macmon（brew install macmon），macOS 上无其它免 root 的温度接口',
+      })
+      return
+    }
+    macmonChild = child
+    setProbe('temps', { state: 'sampling', reason: '正在启动 macmon 传感器' })
+    let pending = ''
+    child.stdout?.setEncoding('utf8')
+    child.stdout?.on('data', (chunk) => {
+      pending += chunk
+      let newline
+      while ((newline = pending.indexOf('\n')) !== -1) {
+        const line = pending.slice(0, newline).trim()
+        pending = pending.slice(newline + 1)
+        if (!line.startsWith('{')) continue
+        const next = parseMacmon(line)
+        if (!next) continue
+        state.temps = next
+        state.tempsAt = Date.now()
+        if (next.clockMHz != null) state.measuredClockMHz = next.clockMHz
+        setProbe('temps', { state: 'ok', reason: null })
+      }
+      if (pending.length > 65536) pending = ''
+    })
+    child.on('error', () => {
+      macmonChild = null
+      setProbe('temps', {
+        state: 'unavailable',
+        reason: 'macmon 启动失败：brew install macmon 后在设置中确认路径',
+      })
+    })
+    child.on('exit', () => {
+      macmonChild = null
+      if (!active) return
+      // Exit without stop() means it died on its own; keep the last reading
+      // visible and mark it stale instead of blanking the row.
+      setProbe('temps', { state: 'stale', reason: 'macmon 已退出，显示最后一次读数' })
+    })
+  }
+
   function startLhm() {
     if (lhmTimer) return
     const poll = async () => {
@@ -879,6 +1021,7 @@ export function apply(ctx, config) {
       } else {
         state.temps = next
         state.tempsAt = Date.now()
+        if (next.clockMHz != null) state.measuredClockMHz = next.clockMHz
         setProbe('temps', { state: 'ok', reason: null })
       }
 
@@ -980,16 +1123,8 @@ export function apply(ctx, config) {
     if (IS_DARWIN) startGpuDarwin()
     else startGpu()
     startNet()
-    if (IS_DARWIN) {
-      // SMC and powermetrics both require root; there is no unprivileged
-      // temperature API on macOS, so say so instead of inventing numbers.
-      setProbe('temps', {
-        state: 'unavailable',
-        reason: 'macOS 不向非特权进程提供温度、风扇与封装功耗（需要 root 的 powermetrics / SMC）',
-      })
-    } else {
-      startLhm()
-    }
+    if (IS_DARWIN) startTempsDarwin()
+    else startLhm()
   }
 
   function stop() {
@@ -997,9 +1132,11 @@ export function apply(ctx, config) {
     kill(gpuChild)
     kill(netChild)
     kill(coresChild)
+    kill(macmonChild)
     gpuChild = null
     netChild = null
     coresChild = null
+    macmonChild = null
     if (gpuTimer) clearInterval(gpuTimer)
     if (lhmTimer) clearInterval(lhmTimer)
     gpuTimer = null
@@ -1013,6 +1150,7 @@ export function apply(ctx, config) {
     state.prevNetAt = 0
     state.net = null
     state.netAt = 0
+    state.measuredClockMHz = null
   }
 
   function touch() {
