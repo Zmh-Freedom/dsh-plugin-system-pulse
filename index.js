@@ -274,6 +274,7 @@ export function apply(ctx, config) {
     probes: {
       gpu: { state: 'idle', reason: null },
       net: { state: 'idle', reason: null },
+      mem: { state: 'idle', reason: null },
       temps: { state: 'idle', reason: null },
     },
     history: [],
@@ -287,6 +288,7 @@ export function apply(ctx, config) {
     /** macOS: cached vm_stat reading (the command costs ~5 ms). */
     mem: null,
     memAt: 0,
+    memLastGoodAt: 0,
     swap: null,
     swapAt: 0,
     /** `% Processor Performance` from the network relay, relative to nominal. */
@@ -406,8 +408,17 @@ export function apply(ctx, config) {
     state.memAt = now
     try {
       state.mem = parseVmStat(execText(DARWIN_TOOLS.vmStat, []))
-    } catch {
-      state.mem = null
+      if (!state.memLastGoodAt) state.memLastGoodAt = now
+      setProbe('mem', { state: 'ok', reason: null })
+    } catch (error) {
+      // Keep the last good reading: a single failed exec must not blank the
+      // row, and os.freemem() is not a usable substitute here (see below).
+      setProbe('mem', {
+        state: state.mem ? 'stale' : 'unavailable',
+        reason: state.mem
+          ? 'vm_stat 读取失败，显示上一次读数'
+          : `无法读取 vm_stat：${String(error?.message ?? error)}`,
+      })
     }
     return state.mem
   }
@@ -439,6 +450,9 @@ export function apply(ctx, config) {
           swapTotal: state.swap?.total ?? null,
         }
       }
+      // Never fall back to os.freemem() on macOS: it counts free pages only, so
+      // the very first failed vm_stat would paint 99% memory in use.
+      return null
     }
     const free = os.freemem()
     return { total, used: total - free, usage: total > 0 ? (total - free) / total : 0 }
@@ -539,7 +553,7 @@ export function apply(ctx, config) {
     const point = {
       t: now,
       c: Math.round(cpu.usage * 1000) / 1000,
-      m: Math.round(mem.usage * 1000) / 1000,
+      m: mem ? Math.round(mem.usage * 1000) / 1000 : null,
       g: gpu.value && Number.isFinite(gpu.value.usage) ? Math.round(gpu.value.usage * 1000) / 1000 : null,
       r: net.value ? Math.round(net.value.rxBps) : null,
       s: net.value ? Math.round(net.value.txBps) : null,
@@ -573,7 +587,7 @@ export function apply(ctx, config) {
       gpu: gpu.value,
       net: net.value,
       temps: temps.value,
-      health: { gpu: gpu.health, net: net.health, temps: temps.health },
+      health: { gpu: gpu.health, net: net.health, mem: state.probes.mem, temps: temps.health },
       intervalMs: cfg.intervalMs,
     }
     state.lastSampleAt = now
