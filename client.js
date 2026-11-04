@@ -62,25 +62,43 @@ window.__ModuleLoader__.load({
 /* Collapsed: a ring sized to travel, drawn with the card's own materials so
    the two states read as one object. */
 .sp-dot {
-  position: absolute; width: 46px; height: 46px;
-  pointer-events: auto; cursor: grab; display: grid; place-items: center;
-  /* The track is opaque on purpose: --dsw-alias-border-l1 is a 10% white
-     wash, invisible over a dark wallpaper, which left the ring looking like a
-     half-drawn arc. The filled arc keeps the accent colour, the track is the
-     same overlay tint the dial uses, mixed solid. */
+  position: absolute; width: 46px; height: 46px; border-radius: 50%;
+  pointer-events: auto; cursor: grab; display: flex; align-items: center; justify-content: center;
+}
+/* The dial is a separate layer from .sp-dot on purpose: a mask clips every
+   descendant, so masking the container also erased the disc and its number.
+   Painting the arc here keeps the interior free for real content. */
+.sp-dot-ring {
+  position: absolute; left: 0; top: 0;
+  width: 46px; height: 46px; aspect-ratio: 1 / 1;
+  pointer-events: none; overflow: hidden;
+  border-radius: 9999px;
+  /* Belt and braces: some WebKit builds paint a small box with a percentage
+     radius as a squircle, so the arc is clipped by an explicit circle mask as
+     well. The mask is what actually makes it a ring. */
   background: conic-gradient(
     var(--sp-ring) calc(var(--sp-deg) * 1%),
     color-mix(in srgb, var(--dsw-alias-label-primary) 16%, var(--dsw-alias-bg-overlay)) 0
   );
-  /* Squircle, not a circle: 50% on a 46 px box still reads as a rounded
-     square once the track is opaque all the way round, so the curvature is
-     lifted to the continuous-corner shape macOS uses for its own inset rings. */
-  border-radius: 38%;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, .26), inset 0 0 0 1px var(--dsw-alias-border-l1);
+  -webkit-mask: radial-gradient(circle closest-side, transparent calc(100% - 7px), #000 calc(100% - 6px));
+  mask: radial-gradient(circle closest-side, transparent calc(100% - 7px), #000 calc(100% - 6px));
+  /* A 6-7 px band has no room for a shadow, so the hairline edge is what
+     separates the ring from a near-black wallpaper. */
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, .06);
+}
+/* The drop shadow lives on its own unmasked layer: a mask would clip it away. */
+.sp-dot-halo {
+  position: absolute; left: 0; top: 0;
+  width: 46px; height: 46px; aspect-ratio: 1 / 1;
+  border-radius: 9999px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .26); pointer-events: none;
 }
 .sp-dot.is-dragging { cursor: grabbing; }
 .sp-dot-in {
-  width: 34px; height: 34px; border-radius: 38%; display: flex; align-items: center; justify-content: center;
+  position: relative; z-index: 1;
+  width: 34px; height: 34px; aspect-ratio: 1 / 1; flex: none;
+  border-radius: 9999px; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
   gap: 1px; pointer-events: none;
   /* Deliberately translucent, like the expanded card: the ring has to read as
      a piece of the same glass, not a solid button. The hairline and the inner
@@ -278,22 +296,22 @@ window.__ModuleLoader__.load({
     return {
       inject: ['slots', 'locale'],
       apply(ctx) {
-        let styles = null
-        try {
-          styles = require('styles')
-        } catch {
-          styles = null
-        }
-        if (styles && typeof styles.insert === 'function') {
-          ctx.effect(() => styles.insert(CSS))
-        } else {
-          ctx.effect(() => {
-            const element = document.createElement('style')
-            element.textContent = CSS
-            document.head.appendChild(element)
-            return () => element.remove()
-          })
-        }
+        // Injected by hand rather than through the shared styles service: the
+        // service claims every untagged <style> for the materializing plugin,
+        // so a stale copy of these rules could be owned by a neighbour and
+        // never removed on reload. A private id lets this plugin find and
+        // delete exactly its own tag on every apply.
+        ctx.effect(() => {
+          const OWNED = 'system-pulse-client'
+          const stale = document.querySelectorAll(`style[data-plugin-css="${OWNED}"]`)
+          for (const element of stale) element.remove()
+          const element = document.createElement('style')
+          element.setAttribute('data-plugin', 'system-pulse')
+          element.setAttribute('data-plugin-css', OWNED)
+          element.textContent = CSS
+          document.head.appendChild(element)
+          return () => element.remove()
+        })
 
         ctx.effect(() => ctx.locale.register('system-pulse', 'en', EN))
         ctx.effect(() => ctx.locale.register('system-pulse', 'zh', ZH))
@@ -547,9 +565,11 @@ window.__ModuleLoader__.load({
                   onClick: toggle,
                   onClickCapture: swallowClickAfterDrag,
                 },
-                // One character at a time fits inside the ring: the number and
-                // its tens digit alternate, and the ring itself carries the
-                // rest of the scale.
+                // The arc and its drop shadow are siblings, not backgrounds of
+                // .sp-dot: masking the container would clip the disc too.
+                h('div', { className: 'sp-dot-halo', 'aria-hidden': 'true' }),
+                h('div', { className: 'sp-dot-ring', 'aria-hidden': 'true' }),
+                // The number is the whole reading: the ring adds the scale.
                 h(
                   'div',
                   { className: 'sp-dot-in' },
