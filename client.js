@@ -59,65 +59,65 @@ window.__ModuleLoader__.load({
 /* Only the hostname may shrink: a long name must not eat the uptime and the
    sampling interval that follow it. */
 .sp-foot span:first-child { flex: 0 1 auto; min-width: 0; }
+/* Collapsed: a ring sized to travel, drawn with the card's own materials so
+   the two states read as one object. */
 .sp-dot {
-  position: absolute; width: 48px; height: 48px; border-radius: 50%;
+  position: absolute; width: 46px; height: 46px; border-radius: 50%;
   pointer-events: auto; cursor: grab; display: grid; place-items: center;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, .28);
   background: conic-gradient(var(--sp-ring) calc(var(--sp-deg) * 1%), var(--dsw-alias-border-l1) 0);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .26);
 }
 .sp-dot.is-dragging { cursor: grabbing; }
-/* A 3:2 pill, not a circle: a circle inside a 48 px ring leaves ~5 px per
-   side, which a two-digit percentage cannot use. */
-.sp-dot-in { width: 42px; height: 28px; border-radius: 999px; display: flex; align-items: center; justify-content: center;
-  background: color-mix(in srgb, var(--dsw-alias-bg-overlay) 96%, transparent);
-  border: 1px solid var(--dsw-alias-border-l1);
-  font-size: 12px; font-weight: 600; color: var(--dsw-alias-label-primary); font-variant-numeric: tabular-nums;
-  pointer-events: none; }
-.sp-pct { font-size: 8px; font-weight: 500; opacity: .72; margin-left: 1px; }
-/* Neither the dot nor the pill can be a transform container: a translate on
-   an ancestor becomes the containing block of fixed positioning, and the
-   bubble — which hangs outside the 48 px hit area — is clipped. The number
-   text does the rolling instead. */
-.sp-roll { font-variant-numeric: tabular-nums; }
-.sp-roll-text { position: relative; display: inline-block; }
-.sp-roll-face { display: inline-block; transition: opacity .3s ease; }
-.sp-roll-face.is-masked { position: absolute; inset: 0; opacity: 0; }
-.sp-hint.is-open .sp-roll-face { opacity: 0; }
-.sp-hint.is-open .sp-roll-face.is-masked { opacity: 1; }
-@keyframes sp-roll {
-  0%, 40% { translate: 0 0; }
-  41%, 92% { translate: 0 -9px; }
-  93%, 100% { translate: 0 0; }
-}
-/* Hidden via visibility rather than a zero width: the bubble hangs outside the
-   48 px hit area, so anything that clips to the dot's box would eat it. The
-   unrolling is done by animating max-width only while it is visible. */
-.sp-hint {
-  position: absolute; left: calc(100% + 8px); top: 50%; transform: translateY(-50%) translateX(-3px);
-  visibility: hidden; max-width: 0; opacity: 0; overflow: hidden; white-space: nowrap;
-  display: flex; flex-wrap: wrap; align-items: baseline; row-gap: 2px; max-height: 0;
-  padding: 5px 0; border-radius: 8px; box-sizing: border-box;
+.sp-dot-in {
+  width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  gap: 1px; pointer-events: none;
   background: color-mix(in srgb, var(--dsw-alias-bg-overlay) 93%, transparent);
   -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
-  border: 1px solid transparent; color: var(--dsw-alias-label-primary);
-  font-size: 11px; line-height: 1.3; font-variant-numeric: tabular-nums;
-  box-shadow: 0 8px 22px rgba(0, 0, 0, .22);
-  transition: max-width .18s ease, max-height .18s ease, opacity .18s ease, transform .18s ease, padding .18s ease, border-color .18s ease;
+  border: 1px solid var(--dsw-alias-border-l1);
+  color: var(--dsw-alias-label-primary);
+  font-size: 11px; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums;
+}
+.sp-pct { font-size: 8px; font-weight: 500; color: var(--dsw-alias-label-tertiary); }
+/* Reading a hovering viewer, not a rolling animation: the full number is
+   always painted; only a title tooltip repeats the units. */
+.sp-roll { font-variant-numeric: tabular-nums; }
+.sp-roll-text { position: relative; display: inline-block; }
+.sp-roll-face { display: inline-block; }
+/* The hover bubble is anchored below the ring, not beside it: a small
+   48 px target next to a 300 px panel is hard to reach, and below is the one
+   direction with room whichever edge the ring sits against. */
+.sp-hint {
+  position: absolute; left: 50%; top: calc(100% + 8px); transform: translateX(-50%) translateY(-3px);
+  visibility: hidden; opacity: 0; pointer-events: none; box-sizing: border-box;
+  display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; align-items: baseline;
+  min-width: 168px; padding: 7px 10px 6px; border-radius: 10px;
+  background: color-mix(in srgb, var(--dsw-alias-bg-overlay) 93%, transparent);
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  border: 1px solid var(--dsw-alias-border-l1);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .26);
+  color: var(--dsw-alias-label-primary);
+  font-size: 11px; line-height: 1.4; font-variant-numeric: tabular-nums; white-space: nowrap;
+  transition: opacity .16s ease, transform .16s ease;
 }
 .sp-dot:hover .sp-hint, .sp-dot.is-dragging .sp-hint, .sp-hint.is-open {
-  visibility: visible; max-height: 300px; opacity: 1; transform: translateY(-50%); padding: 5px 9px; border-color: var(--dsw-alias-border-l1);
-  max-width: 420px;
+  visibility: visible; opacity: 1; transform: translateX(-50%) translateY(0);
 }
-.sp-hint > * { pointer-events: none; }
-.sp-hint-k { color: var(--dsw-alias-label-tertiary); font-size: 10px; margin-right: 4px; }
-.sp-hint-v { font-weight: 600; margin-right: 8px; }
-/* Near the right edge the bubble has to grow to the left instead. */
-.sp-hint.is-left { left: auto; right: calc(100% + 8px); transform: translateY(-50%) translateX(3px); }
-/* Side by side the bubble would eat the whole screen edge, so a ring near the
-   right edge gets a narrow one that stacks its rows instead. */
-.sp-hint.is-left.is-open, .sp-dot:hover .sp-hint.is-left { max-width: 178px; }
-.sp-dot:hover .sp-hint.is-left, .sp-hint.is-left.is-open { transform: translateY(-50%); }
-@media (prefers-reduced-motion: reduce) { .sp-fill { transition: none; } .sp-roll.is-rolling { animation: none; } .sp-hint { transition: none; } }
+.sp-hint > span { pointer-events: none; }
+.sp-hint-k { color: var(--dsw-alias-label-tertiary); font-size: 10px; letter-spacing: .04em; }
+.sp-hint-v { font-weight: 600; text-align: right; }
+/* Near either edge the bubble would be cut by the viewport; slide it back in. */
+.sp-hint.is-right { left: auto; right: -4px; transform: translateY(-3px); }
+.sp-dot:hover .sp-hint.is-right, .sp-dot.is-dragging .sp-hint.is-right, .sp-hint.is-open.is-right { transform: translateY(0); }
+.sp-hint.is-left { left: -4px; right: auto; transform: translateY(-3px); }
+.sp-dot:hover .sp-hint.is-left, .sp-dot.is-dragging .sp-hint.is-left, .sp-hint.is-open.is-left { transform: translateY(0); }
+/* Above instead of below when the ring sits against the bottom edge. */
+.sp-hint.is-top { top: auto; bottom: calc(100% + 8px); transform: translateX(-50%) translateY(3px); }
+.sp-dot:hover .sp-hint.is-top, .sp-dot.is-dragging .sp-hint.is-top, .sp-hint.is-open.is-top { transform: translateX(-50%) translateY(0); }
+.sp-hint.is-top.is-right { transform: translateY(3px); }
+.sp-dot:hover .sp-hint.is-top.is-right, .sp-hint.is-open.is-top.is-right { transform: translateY(0); }
+.sp-hint.is-top.is-left { transform: translateY(3px); }
+.sp-dot:hover .sp-hint.is-top.is-left, .sp-hint.is-open.is-top.is-left { transform: translateY(0); }
+@media (prefers-reduced-motion: reduce) { .sp-fill { transition: none; } .sp-hint { transition: none; } }
 `
 
     const EN = {
@@ -491,7 +491,17 @@ window.__ModuleLoader__.load({
 
           if (collapsed) {
             const ringValue = pct(cpu?.usage)
-            const hintLeft = (pos.x - origin.x) + 48 + 12 > window.innerWidth
+            // Which way the bubble can open without leaving the viewport: it
+            // prefers below, and only flips up when the ring hugs the bottom.
+            const EDGE = 12
+            const ringLeft = pos.x - origin.x
+            const ringTop = pos.y - origin.y
+            const hintClasses = [
+              ringTop + 46 + EDGE + 120 > window.innerHeight ? 'is-top' : '',
+              ringLeft < 120 ? 'is-left' : ringLeft + 46 + EDGE > window.innerWidth - 120 ? 'is-right' : '',
+            ]
+              .filter(Boolean)
+              .join(' ')
             // A probe without a reading still gets a row: on this machine it
             // may simply be unavailable, and hiding the row would leave the
             // hover hint silently short of an answer.
@@ -536,9 +546,6 @@ window.__ModuleLoader__.load({
                           'span',
                           { className: 'sp-roll-text' },
                           h('span', { className: 'sp-roll-face' }, `${Math.round(cpu.usage * 100)}`),
-                          // Same node count: PowerPoint-style, the tens digit is
-                          // what stays readable while the bubble is open.
-                          h('span', { className: 'sp-roll-face is-masked' }, `${Math.round(cpu.usage * 10)}`),
                         ),
                       )
                     : '—',
@@ -546,7 +553,7 @@ window.__ModuleLoader__.load({
                 ),
                 h(
                   'div',
-                  { className: `sp-hint${hintLeft ? ' is-left' : ''}`, 'aria-hidden': 'true' },
+                  { className: `sp-hint${hintClasses ? ' ' + hintClasses : ''}`, 'aria-hidden': 'true' },
                   h('span', { className: 'sp-hint-k' }, t('ringHint')),
                   h('span', { className: 'sp-hint-v' }, ringValue),
                   hintRow(t('gpu'), gpu ? pct(gpu.usage) : ghostText(health?.gpu)),
