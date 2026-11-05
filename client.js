@@ -16,17 +16,26 @@ window.__ModuleLoader__.load({
     // Pointer travel (CSS px) below which a press still counts as a click.
     const DRAG_SLOP = 3
 
-    // Fixed hues instead of --dsw-alias-brand-primary: that token is near white
-    // in the dark appearance and near black in the light one, so the collapsed
-    // ring read as an empty black arc on a light desktop. Load semantics still
-    // come from the same three steps; only the base tone is pinned.
+    // The accent carries the ordinary load tone: the bar fill, the percentage,
+    // the sparkline and the collapsed ring all read --sp-accent.
+    //
+    // Light appearance: a fixed blue. --dsw-alias-brand-primary is near black in
+    // the light palette, so the collapsed ring read as an empty arc on a light
+    // desktop; the three steps are pinned instead.
+    // Dark appearance: white. The app marks a dark palette with
+    // body[data-ds-dark-theme], so the swap is a selector rather than React
+    // state -- it follows a live theme change without re-rendering anything.
     const TONE_ACCENT = '#0A84FF'
+    const TONE_ACCENT_DARK = '#FFFFFF'
     const TONE_WARN = '#F5A524'
     const TONE_DANGER = '#FF453A'
 
     const CSS = `
 .sp-wrap { position: absolute; width: 0; height: 0; pointer-events: none; }
 .sp-wrap, .sp-card, .sp-dot { --sp-accent: ${TONE_ACCENT}; --sp-warn: ${TONE_WARN}; --sp-danger: ${TONE_DANGER}; }
+body[data-ds-dark-theme] .sp-wrap,
+body[data-ds-dark-theme] .sp-card,
+body[data-ds-dark-theme] .sp-dot { --sp-accent: ${TONE_ACCENT_DARK}; }
 .sp-card {
   position: absolute; width: ${CARD_W}px; box-sizing: border-box;
   background: color-mix(in srgb, var(--dsw-alias-bg-overlay) 93%, transparent);
